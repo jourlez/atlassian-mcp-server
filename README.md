@@ -157,6 +157,64 @@ For [Cursor](https://cursor.com/marketplace/atlassian), skills are part of the m
 
 ---
 
+## Multi-account setup
+
+Connect multiple Atlassian Cloud tenants simultaneously — no more logging out and back in when switching between sites.
+
+The `mcp-remote` proxy implements [RFC 8707 Resource Indicators](https://datatracker.ietf.org/doc/html/rfc8707) via the `--resource` flag. Each unique `(server URL + resource)` pair maintains a completely isolated OAuth 2.1 session in `~/.mcp-auth/`, so all accounts authenticate and remain active at the same time.
+
+### Prerequisites
+
+* **Node.js v18+** on your system `PATH`
+
+### Automated setup
+
+```bash
+node scripts/manage-accounts.mjs
+```
+
+An interactive menu lets you add accounts, remove them, and clear stored tokens — across VS Code, Claude Desktop, and Cursor.
+
+### Manual setup
+
+Add one entry per Atlassian tenant to your client's MCP config file, replacing the default single-account entry:
+
+```json
+{
+  "mcpServers": {
+    "atlassian-company-a": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp",
+        "--resource",
+        "https://company-a.atlassian.net/"
+      ]
+    },
+    "atlassian-company-b": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp",
+        "--resource",
+        "https://company-b.atlassian.net/"
+      ]
+    }
+  }
+}
+```
+
+> [!IMPORTANT]
+> The `--resource` URL must match the root of your Atlassian tenant exactly, including the trailing slash.
+
+Restart your MCP client after editing the config. A browser window opens for each new account to complete OAuth consent. See [multi-account/README.md](multi-account/README.md) for the full guide including per-client config file locations, troubleshooting, and token management.
+
+---
+
 ## Admin notes: Managing access
 
 If you're an admin preparing your organization to use the Atlassian Rovo MCP Server, review these key considerations. For more detailed admin guidance, see:

@@ -1,0 +1,38 @@
+{
+  "_comment": "Multi-account Atlassian MCP configuration template. Copy this file and replace the placeholder tenant URLs with your own. Add or remove entries as needed — one entry per Atlassian account. See multi-account/README.md for full instructions.",
+  "mcpServers": {
+    "atlassian-account-1": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp",
+        "--resource",
+        "https://YOUR-FIRST-TENANT.atlassian.net/"
+      ]
+    },
+    "atlassian-account-2": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp",
+        "--resource",
+        "https://YOUR-SECOND-TENANT.atlassian.net/"
+      ]
+    },
+    "atlassian-account-3": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@latest",
+        "https://mcp.atlassian.com/v1/mcp",
+        "--resource",
+        "https://YOUR-THIRD-TENANT.atlassian.net/"
+      ]
+    }
+  }
+}

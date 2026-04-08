@@ -1,0 +1,22 @@
+{
+  "accounts": {
+    "decentralchain": {
+      "tenantUrl": "https://decentralchain.atlassian.net/",
+      "label": "DCC (decentralchain.atlassian.net)",
+      "projects": ["DCC"],
+      "spaces": []
+    },
+    "jourlez": {
+      "tenantUrl": "https://jourlez.atlassian.net/",
+      "label": "Personal (jourlez.atlassian.net)",
+      "projects": ["FREE"],
+      "spaces": []
+    },
+    "astroscr": {
+      "tenantUrl": "https://astroscr.atlassian.net/",
+      "label": "Astro SCR (astroscr.atlassian.net)",
+      "projects": ["LIC"],
+      "spaces": []
+    }
+  }
+}
