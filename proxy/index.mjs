@@ -115,6 +115,15 @@ class ChildMcp {
       ['-y', `mcp-remote@${MCP_REMOTE_VERSION}`, MCP_URL, '--resource', this.tenantUrl, '--silent'],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     );
+    // Absorb EPIPE / write-after-close errors on the child's stdin so they
+    // don't surface as uncaughtExceptions.  The exitCode guard in request()
+    // prevents writes after the child has fully exited; this handles the
+    // narrow race where the child starts closing while a write is in flight.
+    this._proc.stdin.on('error', err => {
+      if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') {
+        error('child stdin write error', { key: this.key, code: err.code, err: err.message });
+      }
+    });
     this._rl = createInterface({ input: this._proc.stdout, crlfDelay: Infinity });
     this._rl.on('line', raw => {
       const line = raw.trim();
@@ -223,6 +232,9 @@ function scheduleReconnect(key) {
   }, delayMs);
 
   reconnectTimers.set(key, t);
+  // Unref the timer so it does not prevent the event loop from exiting
+  // naturally if the process is shutting down by other means.
+  if (typeof t.unref === 'function') t.unref();
 }
 
 // ─── Connect one tenant ────────────────────────────────────────────────────────
@@ -503,7 +515,16 @@ function shutdown(signal) {
   process.exit(0);
 }
 
-// ─── Process safety net ───────────────────────────────────────────────────────
+// ─── Process safety net ───────────────────────────────────────────────────────// stdout EPIPE: the MCP host closed the pipe while we were still writing.
+// Trigger graceful shutdown instead of letting uncaughtException swallow it.
+process.stdout.on('error', err => {
+  if (err.code === 'EPIPE') {
+    warn('stdout EPIPE — MCP host disconnected', { err: err.message });
+    shutdown('stdout-epipe');
+  } else {
+    error('stdout error', { code: err.code, err: err.message });
+  }
+});
 // Prevent uncaught exceptions / rejections from silently killing the proxy.
 // Log them and continue — the per-request .catch() in the stdin handler
 // already sends a JSON-RPC error back to the client for in-flight requests.

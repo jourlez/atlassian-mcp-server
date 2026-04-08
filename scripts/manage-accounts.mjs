@@ -51,7 +51,12 @@ async function readConfig() {
 }
 
 async function writeConfig(cfg) {
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+  // Atomic write: write to a temp file first, then rename into place.
+  // This guarantees the config is never left in a partial/corrupt state
+  // if the process is killed mid-write (POSIX rename is atomic).
+  const tmp = CONFIG_FILE + '.tmp';
+  await fs.writeFile(tmp, JSON.stringify(cfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await fs.rename(tmp, CONFIG_FILE);
 }
 
 // ─── Prompt helpers ───────────────────────────────────────────────────────────
