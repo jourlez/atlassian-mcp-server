@@ -2,226 +2,32 @@
   <img src="images/atlassian_logo_brand_RGB.svg">
 </p>
 
-# Atlassian MCP Server
+# @jourlez/atlassian-mcp-server
 
-The Atlassian Rovo MCP Server is a cloud-based bridge between your Atlassian Cloud site and compatible external tools. Once configured, it enables those tools to interact with Jira, Compass, and Confluence data in real-time. This functionality is powered by secure authentication using **OAuth 2.1** or **API tokens**, which ensures all actions respect the user's existing access controls.
+A multi-tenant MCP proxy that connects **all your Atlassian Cloud workspaces simultaneously** to any MCP-compatible AI client. Built on top of the [official Atlassian MCP endpoint](https://mcp.atlassian.com/v1/mcp) — all auth, permissions, and data access go through Atlassian's own infrastructure.
 
-With the Atlassian Rovo MCP Server, you can:
+- **Simultaneous multi-account** — all tenants connect at startup, routing is automatic
+- **Zero config switching** — the AI never needs to know which account to use
+- **OAuth 2.1** via browser, tokens stored in `~/.mcp-auth/`
+- **Config stored in `~/.atlassian-mcp/accounts.json`** — survives package updates and `npx` cache clears
 
-* **Summarize and search** Jira, Compass, and Confluence content without switching tools.
-* **Create and update** issues or pages based on natural language commands.
-* **Automate repetitive work**, like generating tickets from meeting notes or specs.
-
-It's designed developers, content creators, and project teams who use IDEs or AI platforms and want to work with Atlassian data without constantly context switching.
-
----
-
-## Supported clients
-
-The Atlassian Rovo MCP Server supports several clients, including:
-
-* [OpenAI ChatGPT](https://platform.openai.com/docs/guides/tools-connectors-mcp)
-* [Claude](https://code.claude.com/docs/en/mcp)
-* [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)
-* [Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md)
-* [Amazon Quick Suite](https://docs.aws.amazon.com/quicksuite/latest/userguide/mcp-integration.html)
-* [Visual Studio Code](https://code.visualstudio.com/)
-
-The Atlassian Rovo MCP Server also supports any **local MCP-compatible client** that can run on `localhost` and connect to the server via the `mcp-remote` proxy. This enables custom or third-party integrations that follow the MCP specification.
-
-For detailed setup instructions, refer to your client's own MCP documentation or built-in assistant.
+> **Requirements:** Node.js v22+ · An Atlassian Cloud site (Jira, Confluence, and/or Compass)
 
 ---
 
-## Before you start
+## Quick start
 
-Ensure your environment meets the necessary requirements to successfully set up the Atlassian Rovo MCP Server. This section outlines the technical prerequisites and key access considerations.
-
-### Prerequisites
-
-Before connecting to the Atlassian Rovo MCP Server, review the setup requirements for your environment:
-
-#### For supported clients
-
-* An **Atlassian Cloud site** with Jira, Compass, and/or Confluence
-* Access to **the client of choice**
-* A modern browser to complete the OAuth 2.1 authorization flow, or API token credentials for headless authentication
-
-#### For IDEs or local clients (Desktop setup)
-
-* An **Atlassian Cloud site** with Jira, Compass, and/or Confluence
-* A supported IDE (for example, **Claude desktop, VS Code, or Cursor**) or a custom MCP-compatible client
-* **Node.js v22+** installed to run the local MCP proxy (`mcp-remote`)
-* A modern browser for completing OAuth login, or API token credentials for headless authentication
-
----
-
-## Data and security
-
-Security is a core focus of the Atlassian Rovo MCP Server:
-
-* All traffic is encrypted via HTTPS using TLS 1.2 or later.
-* OAuth 2.1 and API token authentication provide secure access control.
-* Data access respects Jira, Compass, and Confluence user permissions.
-* If your organization uses IP allowlisting for Atlassian Cloud products, tool calls made through the Atlassian Rovo MCP Server also honor those IP rules.
-
-For a deeper overview of the security model and admin controls, see:
-
-* [Understand Atlassian Rovo MCP Server](https://support.atlassian.com/security-and-access-policies/docs/understand-atlassian-rovo-mcp-server/)
-* [Control Atlassian Rovo MCP Server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/)
-
----
-
-## How it works
-
-### Architecture and communication
-
-1. A supported client connects to the server endpoint:
-```
-https://mcp.atlassian.com/v1/mcp
-```
-2. Depending on your setup, a secure browser-based OAuth 2.1 flow is triggered, or API token authentication is used.
-3. Once authorized, the client streams contextual data and receives real-time responses from Jira, Compass, or Confluence.
-
-> [!NOTE]
-> While `/sse` as a server endpoint are supported, we recommend updating any custom clients configured to use `/sse` so they now point to `/mcp`.
-
-### Permission management
-
-Access is granted only to data that the user already has permission to view in Atlassian Cloud. All actions respect existing project or space-level roles. OAuth and API token authentication both honor configured scopes and Atlassian permissions.
-
-### API token authentication (headless)
-
-API token authentication is available for headless or long-running client setups.
-
-* **Admin enablement required:** An organization admin must enable API token authentication for Rovo MCP Server.
-* **Scoped token required:** Use a Rovo MCP scoped API token for the required tools and data access.
-* **Configuration guide:** [Configure authentication via API token](https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token/)
-* **Admin setting reference:** [Control Atlassian Rovo MCP Server settings - Configure authentication](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/#Configure-authentication)
-
----
-
-## Example workflows
-
-Once connected, you can perform a variety of useful tasks from within your supported client.
-
-### Jira workflows
-
-* **Search**: "Find all open bugs in Project Alpha."
-* **Create/update**: "Create a story titled 'Redesign onboarding'."
-* **Bulk create**: "Make five Jira issues from these notes."
-
-### Confluence workflows
-
-* **Summarize**: "Summarize the Q2 planning page."
-* **Create**: "Create a page titled 'Team Goals Q3'."
-* **Navigate**: "What spaces do I have access to?"
-
-### Compass workflows
-
-* **Create**: "Create a service component based on the current repository."
-* **Bulk create**: "Import components and custom fields from this CSV/JSON"
-* **Query**: "What depends on the `api-gateway` service?"
-
-### Combined tasks
-
-* **Link content**: "Link these three Jira tickets to the 'Release Plan' page."
-* **Find documentation**: "Fetch the Confluence documentation page linked to this Compass component."
-
-> [!NOTE]
-> Actual capabilities vary, depending on your permission level and client platform.
-
----
-
-## Tips and tricks
-
-### Set default CloudId, Jira project, and Confluence space
-
-Update your [AGENTS.md](https://agents.md/) with the Markdown below to reduce discovery tool calls, save time and tokens, and set maximum search results.
-
-``` MD
-## Atlassian Rovo MCP
-
-When connected to atlassian-rovo-mcp:
-- **MUST** use Jira project key = YOURPROJ
-- **MUST** use Confluence spaceId = "123456"
-- **MUST** use cloudId = "https://yoursite.atlassian.net" (do NOT call getAccessibleAtlassianResources)
-- **MUST** use `maxResults: 10` or `limit: 10` for ALL Jira JQL and Confluence CQL search operations.
-```
-
-### Use skills
-
-If you're using a desktop client like Claude, you can create or reuse skills for repeated tasks. [See the default Rovo MCP skills](https://github.com/atlassian/atlassian-mcp-server/tree/main/skills)
-
-For [Cursor](https://cursor.com/marketplace/atlassian), skills are part of the marketplace plugin.
-
----
-
-## Multi-account setup
-
-Connect multiple Atlassian Cloud tenants simultaneously — no more logging out and back in when switching between sites.
-
-The `mcp-remote` proxy implements [RFC 8707 Resource Indicators](https://datatracker.ietf.org/doc/html/rfc8707) via the `--resource` flag. Each unique `(server URL + resource)` pair maintains a completely isolated OAuth 2.1 session in `~/.mcp-auth/`, so all accounts authenticate and remain active at the same time.
-
-### Prerequisites
-
-* **Node.js v22+** on your system `PATH`
-
-### Automated setup
+### 1. Add your first account
 
 ```bash
-node scripts/manage-accounts.mjs
+npx @jourlez/atlassian-mcp-server manage-accounts add
 ```
 
-An interactive menu lets you add accounts, remove them, and clear stored tokens — across VS Code, Claude Desktop, and Cursor.
+You'll be prompted for your tenant URL (e.g. `https://my-company.atlassian.net`). A browser window opens for OAuth consent. Config is saved to `~/.atlassian-mcp/accounts.json`.
 
-### Manual setup
+### 2. Configure your MCP client
 
-Add one entry per Atlassian tenant to your client's MCP config file, replacing the default single-account entry:
-
-```json
-{
-  "mcpServers": {
-    "atlassian-company-a": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote@0.1.38",
-        "https://mcp.atlassian.com/v1/mcp",
-        "--resource",
-        "https://company-a.atlassian.net/"
-      ]
-    },
-    "atlassian-company-b": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote@0.1.38",
-        "https://mcp.atlassian.com/v1/mcp",
-        "--resource",
-        "https://company-b.atlassian.net/"
-      ]
-    }
-  }
-}
-```
-
-> [!IMPORTANT]
-> The `--resource` URL must match the root of your Atlassian tenant exactly, including the trailing slash.
-
-Restart your MCP client after editing the config. A browser window opens for each new account to complete OAuth consent. See [multi-account/README.md](multi-account/README.md) for the full guide including per-client config file locations, troubleshooting, and token management.
-
----
-
-## Visual Studio Code setup
-
-> **Prerequisites:** [Node.js v22+](https://nodejs.org/) · VS Code with [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) (or any MCP-compatible extension)
-
-### Single account
-
-Add the following to your workspace `.vscode/mcp.json` (create it if it doesn't exist):
+**VS Code** — create or edit `.vscode/mcp.json` in your workspace:
 
 ```json
 {
@@ -235,95 +41,138 @@ Add the following to your workspace `.vscode/mcp.json` (create it if it doesn't 
 }
 ```
 
-Restart VS Code or click **Restart** next to the server in the MCP panel. A browser window will open for OAuth login on first use.
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
-> **First run only:** `npx` downloads the package on first launch (~5 s). Subsequent starts are instant from cache.
-
-### Multiple accounts (seamless mode)
-
-For multiple Atlassian tenants, use `accounts.json` to configure all of them. The proxy connects all tenants simultaneously and routes requests automatically — no manual switching required.
-
-**Step 1 — Add accounts interactively:**
-
-```bash
-npx @jourlez/atlassian-mcp-server manage-accounts add
+```json
+{
+  "mcpServers": {
+    "atlassian": {
+      "command": "npx",
+      "args": ["-y", "@jourlez/atlassian-mcp-server"]
+    }
+  }
+}
 ```
 
-This stores your tenant config in `~/.atlassian-mcp/accounts.json` and prompts for OAuth consent in your browser.
+**Cursor** — add to `~/.cursor/mcp.json`:
 
-**Step 2 — Use the same `.vscode/mcp.json` as above.** The proxy reads `~/.atlassian-mcp/accounts.json` automatically.
-
-**Manage accounts at any time:**
-
-```bash
-npx @jourlez/atlassian-mcp-server manage-accounts        # interactive menu
-npx @jourlez/atlassian-mcp-server manage-accounts list   # show all configured tenants
-npx @jourlez/atlassian-mcp-server manage-accounts remove # remove a tenant
+```json
+{
+  "mcpServers": {
+    "atlassian": {
+      "command": "npx",
+      "args": ["-y", "@jourlez/atlassian-mcp-server"]
+    }
+  }
+}
 ```
 
-### Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `could not determine executable to run` | Clear the npx cache: `rm -rf ~/.npm/_npx` then restart VS Code |
-| `Config error: accounts.json not found` | Run `npx @jourlez/atlassian-mcp-server manage-accounts add` to create your first account |
-| OAuth browser window doesn't open | Check VS Code Output → MCP for the auth URL and open it manually |
-| Tools show for one tenant only | All tenants connect on startup — run `atlassian_list_accounts` to verify status |
+Restart your client. OAuth login runs once — subsequent starts are instant.
 
 ---
 
-## Admin notes: Managing access
+## Managing accounts
 
-If you're an admin preparing your organization to use the Atlassian Rovo MCP Server, review these key considerations. For more detailed admin guidance, see:
+```bash
+npx @jourlez/atlassian-mcp-server manage-accounts          # interactive menu
+npx @jourlez/atlassian-mcp-server manage-accounts list     # show all configured tenants + status
+npx @jourlez/atlassian-mcp-server manage-accounts add      # add a new tenant
+npx @jourlez/atlassian-mcp-server manage-accounts remove   # remove a tenant
+npx @jourlez/atlassian-mcp-server manage-accounts logout   # clear stored OAuth tokens
+```
 
-* [Understand Atlassian Rovo MCP server](https://support.atlassian.com/security-and-access-policies/docs/understand-atlassian-rovo-mcp-server/)
-* [Control Atlassian Rovo MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/)
-* [Manage Atlassian Rovo MCP server](https://support.atlassian.com/security-and-access-policies/docs/manage-atlassian-rovo-mcp-server/)
-* [Monitor Atlassian Rovo MCP server activity](https://support.atlassian.com/security-and-access-policies/docs/monitor-atlassian-rovo-mcp-server-activity/)
+Config is stored in `~/.atlassian-mcp/accounts.json`. You can also set `ATLASSIAN_MCP_CONFIG=/path/to/accounts.json` to override the location.
 
-### Installation and access
+### Example `accounts.json`
 
-* **Not a Marketplace App:**  
-The Atlassian Rovo MCP Server is _not_ installed via the Atlassian Marketplace or the **Manage apps** screen. Instead, it is installed automatically the first time a user completes the OAuth 2.1 (3LO) consent flow (just-in-time or "lazy loading" installation).
-* **First-time installation requirements:**  
-The first user to complete the 3LO consent flow for your site must have access to the Atlassian apps requested by the MCP scopes (for example, Jira and/or Confluence). This ensures the MCP app is registered with the correct permissions for your site.
-* **Subsequent user access:**  
-After the initial install, users with access to only one Atlassian app (for example, just Jira or just Confluence) can also complete the 3LO flow to access that Atlassian app through MCP.
+```json
+{
+  "accounts": {
+    "my-company": {
+      "tenantUrl": "https://my-company.atlassian.net/",
+      "label": "My Company",
+      "projects": ["PROJ", "BACKEND"],
+      "spaces": ["DEV", "OPS"]
+    },
+    "client-workspace": {
+      "tenantUrl": "https://client-workspace.atlassian.net/",
+      "label": "Client Workspace",
+      "projects": ["DEMO"],
+      "spaces": []
+    }
+  }
+}
+```
 
-### Manage, monitor, and revoke access
+`projects` and `spaces` enable direct routing without fan-out — list the Jira project keys and Confluence space keys that live on each site.
 
-* **Admin controls:**  
-Site and organization admins can manage, review, or revoke the MCP app's access from [Manage your organization's Marketplace and third-party apps](https://support.atlassian.com/security-and-access-policies/docs/manage-your-users-third-party-apps/). The app appears in your site's **Connected apps** list after the first successful 3LO consent.
-* **End-user controls:**  
-Individual users can revoke their own app authorizations from their profile settings.
-* **Domain and IP controls:**  
-Use the **Rovo MCP server** settings page in Atlassian Administration to control which external AI tools and domains are allowed to connect. For details, see [Available Atlassian Rovo MCP server domains](https://support.atlassian.com/security-and-access-policies/docs/available-atlassian-rovo-mcp-server-domains/). If your organization uses IP allowlisting for Atlassian Cloud apps, requests made through the Atlassian Rovo MCP Server must originate from an IP address that is allowed by your organization's IP allowlist for the relevant Atlassian app. For configuration details, see [Specify IP addresses for app access](https://support.atlassian.com/security-and-access-policies/docs/specify-ip-addresses-for-product-access/).
-* **Audit logging:** To support monitoring and compliance, key actions performed via the Atlassian Rovo MCP Server are logged in your organization's audit log. Admins can review these logs in Atlassian Administration. For more information, see [Monitor Atlassian Rovo MCP server activity](https://support.atlassian.com/security-and-access-policies/docs/monitor-atlassian-rovo-mcp-server-activity/).
+---
 
-### Troubleshooting common issues
+## How routing works
 
-* **"Your site admin must authorize this app" error:**  
-A site admin must complete the 3LO consent flow before anyone else can use the MCP app. See ["Your site admin must authorize this app"](https://support.atlassian.com/atlassian-cloud/kb/your-site-admin-must-authorize-this-app-error-in-atlassian-cloud-apps/) error in Atlassian Cloud apps for more details.
-* **"You don't have permission to connect from this IP address. Please ask your admin for access."**  
-This usually indicates that IP allowlisting is enabled and the user's current IP address isn't allowed to access Jira, Confluence, Compass, or Rovo via the Atlassian Rovo MCP Server. Ask your site or organization admin to review the IP allowlist configuration and add the relevant network or VPN IP ranges if appropriate.
-* **App not appearing in Connected apps:**  
-Ensure the user is using the correct Atlassian account and site, and confirm the app is requesting the correct Atlassian app scopes (for example, Jira scopes). If issues persist, check [Manage your organization's Marketplace and third-party apps](https://support.atlassian.com/security-and-access-policies/docs/manage-your-users-third-party-apps/) or contact Atlassian Support. Also verify the user's Jira, Confluence, or Compass permissions in Atlassian Administration.
+The proxy connects all tenants simultaneously. For each tool call it resolves the target tenant using this priority chain:
+
+1. `cloudId` argument → exact match
+2. Issue key prefix → `DCC-123` maps to whichever tenant owns project `DCC`
+3. Explicit `projectKey` / `spaceKey` argument
+4. JQL/CQL `project = "KEY"` clause
+5. Fan-out to all tenants → first non-error wins  
+   (`getAccessibleAtlassianResources` merges results from all tenants)
+
+---
+
+## MCP tools exposed
+
+In addition to the full Atlassian MCP tool suite, the proxy exposes three management tools the AI can use directly:
+
+| Tool | Description |
+|---|---|
+| `atlassian_list_accounts` | Show all configured tenants and their connection status |
+| `atlassian_add_account` | Add a new tenant and trigger OAuth consent |
+| `atlassian_remove_account` | Remove a tenant and disconnect it |
+
+---
+
+## Tips
+
+### Speed up tool calls with explicit routing hints
+
+Add this to your `AGENTS.md` or system prompt to eliminate discovery overhead:
+
+```md
+## Atlassian MCP
+- Default Jira project: YOURPROJ
+- Default Confluence space: ENG
+- cloudId: https://yoursite.atlassian.net (skip getAccessibleAtlassianResources)
+- Use maxResults: 10 for all JQL/CQL searches
+```
+
+### Skills
+
+Pre-built prompt skills for common workflows (status reports, triage, backlog generation) are in the [`skills/`](skills/) directory.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `could not determine executable to run` | `rm -rf ~/.npm/_npx` then restart |
+| `Config error` on startup | Run `manage-accounts add` — config file doesn't exist yet |
+| OAuth browser window doesn't open | Check client logs for the auth URL and open it manually |
+| Only one tenant's tools visible | Run `atlassian_list_accounts` — additional tenants connect on first use |
+| `403 Forbidden` on tool calls | Your Atlassian admin may need to enable Rovo MCP for your org |
+
+---
 
 ## Security
-Model Context Protocol (MCP) lets AI agents connect to tools and Atlassian data using your account’s permissions, which creates powerful workflows but also structural risks. Any MCP client or server you enable (e.g., IDE plugins, desktop apps, hosted MCP servers, “one-click” integrations) can cause an AI agent to perform actions on your behalf.
 
-Large Language models (LLMs) are vulnerable to [prompt injection](https://owasp.org/www-community/attacks/PromptInjection) and related attacks (such as [indirect prompt injection](https://owasp.org/www-community/attacks/PromptInjection) and [tool poisoning](https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks)). These attacks can instruct the agent to exfiltrate data or make unintended changes without explicit requests.
+All traffic goes through `https://mcp.atlassian.com` over TLS. OAuth tokens are stored locally in `~/.mcp-auth/` and never leave your machine. Data access respects your existing Atlassian project/space permissions.
 
-To reduce risk, only use trusted MCP clients and servers, carefully review which tools and data each agent can access, and apply least privilege (scoped tokens, minimal project/workspace access). For any high‑impact or destructive action, require human confirmation and monitor audit logs for unusual activity. We strongly recommend reviewing Atlassian’s guidance on MCP risks at [MCP Clients: Understanding the potential security risks](https://www.atlassian.com/blog/artificial-intelligence/mcp-risk-awareness)
+LLMs are vulnerable to [prompt injection](https://owasp.org/www-community/attacks/PromptInjection). Only connect trusted MCP clients and review high-impact actions before confirming. See [Atlassian's MCP risk guidance](https://www.atlassian.com/blog/artificial-intelligence/mcp-risk-awareness).
 
-## Support and feedback
-Your feedback plays a crucial role in shaping the Atlassian Rovo MCP Server. If you encounter bugs, limitations, or have suggestions:
-- Visit the [Atlassian Support Portal](https://support.atlassian.com/) Portal to report issues and feature requests.
-- Share your experiences and questions on the [Atlassian Community](https://community.atlassian.com/) and developer-related asks on the [Developer's one](https://developer.atlassian.com/).
-- Go to our [Ecosystem Developer Portal](https://ecosystem.atlassian.net/servicedesk/customer/portal/14/user/login?destination=portal%2F14) if you are building an app and found a bug/issue or have suggestions.
+---
 
-## Disclaimer
+## License
 
-MCP clients can perform actions in Jira, Confluence, and Compass with your existing permissions. Use least privilege, review high‑impact changes before confirming, and monitor audit logs for unusual activity.
-
-Learn more: MCP Clients - (Understanding the potential security risks)[https://www.atlassian.com/blog/artificial-intelligence/mcp-risk-awareness]
+Apache 2.0 — forked from [atlassian/atlassian-mcp-server](https://github.com/atlassian/atlassian-mcp-server)
