@@ -507,41 +507,33 @@ async function writeConfig() {
 // ─── Management tool handlers ─────────────────────────────────────────────────
 function handleListAccounts() {
   if (!tenants.size) {
-    return { content: [{ type: 'text', text: JSON.stringify({ accounts: [], summary: { total: 0, connected: 0, disconnected: 0 } }) }] };
+    return { content: [{ type: 'text', text: 'No accounts configured yet. Use atlassian_add_account to add one.' }] };
   }
 
-  const accounts = [];
+  const lines = [];
   for (const [key, a] of tenants) {
     const alive   = a.child?.alive;
     const retries = a.retries ?? 0;
-    const status  = !a.connected ? 'not_connected'
-                  : !alive       ? (retries > 0 ? 'reconnecting' : 'disconnected')
-                  : 'connected';
+    const status  = !a.connected ? '🔴 not connected'
+                  : !alive       ? (retries > 0 ? `🟡 reconnecting (${retries}/${RECONNECT_MAX_RETRIES})` : '🟡 disconnected')
+                  : '🟢 connected';
+    const ids = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(not yet discovered)';
 
-    accounts.push({
-      key,
-      label:      a.label ?? key,
-      url:        a.tenantUrl,
-      status,
-      reconnectAttempt: retries > 0 ? { current: retries, max: RECONNECT_MAX_RETRIES } : null,
-      cloudIds:   [...a.cloudIds],
-      projects:   a.projects ?? [],
-      spaces:     a.spaces   ?? [],
-    });
+    lines.push(`${a.label ?? key}  ${status}`);
+    lines.push(`  Key      : ${key}`);
+    lines.push(`  URL      : ${a.tenantUrl}`);
+    lines.push(`  CloudId  : ${ids}`);
+    lines.push(`  Projects : ${(a.projects ?? []).join(', ') || '—'}`);
+    lines.push(`  Spaces   : ${(a.spaces   ?? []).join(', ') || '—'}`);
+    lines.push('');
   }
 
-  const connected    = accounts.filter(a => a.status === 'connected').length;
-  const disconnected = accounts.filter(a => a.status !== 'connected').length;
+  const total       = tenants.size;
+  const connected   = [...tenants.values()].filter(a => a.child?.alive).length;
+  const disconnected = total - connected;
+  lines.push(`${connected}/${total} connected  ·  ${disconnected} disconnected`);
 
-  return {
-    content: [{
-      type: 'text',
-      text: JSON.stringify({
-        summary: { total: accounts.length, connected, disconnected },
-        accounts,
-      }, null, 2),
-    }],
-  };
+  return { content: [{ type: 'text', text: lines.join('\n').trim() }] };
 }
 
 async function handleAddAccount(args) {

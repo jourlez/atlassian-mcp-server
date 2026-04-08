@@ -1,6 +1,6 @@
 {
   "name": "@jourlez/atlassian-mcp-server",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Multi-tenant Atlassian MCP proxy — seamlessly routes Jira, Confluence, and Compass requests across multiple Atlassian Cloud accounts.",
   "type": "module",
   "bin": {
