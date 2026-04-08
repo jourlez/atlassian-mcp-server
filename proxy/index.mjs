@@ -29,7 +29,7 @@
  */
 
 import { spawn }                    from 'node:child_process';
-import { readFile, writeFile }      from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { createInterface }          from 'node:readline';
 import { fileURLToPath }            from 'node:url';
 import path                         from 'node:path';
@@ -342,9 +342,10 @@ async function discoverCloudIds(key, acct) {
       params: { name: 'getAccessibleAtlassianResources', arguments: {} },
     }, TIMEOUT_DISCOVER_MS);
     for (const r of parseResourceArray(resp?.result)) {
-      if (r.cloudId) {
-        acct.cloudIds.add(r.cloudId);
-        cloudIdMap.set(r.cloudId, key);
+      const cid = r.id ?? r.cloudId;
+      if (cid) {
+        acct.cloudIds.add(cid);
+        cloudIdMap.set(cid, key);
       }
     }
     log('cloudId discovery complete', { key, cloudIds: [...acct.cloudIds] });
@@ -365,52 +366,18 @@ function parseResourceArray(result) {
 }
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
-function routeToTenant(params) {
-  const args = params?.arguments ?? {};
-
-  // 1. cloudId — strongest signal
-  if (args.cloudId) {
-    const key = cloudIdMap.get(args.cloudId);
-    if (key) { const t = tenants.get(key); if (t?.child?.alive) return t; }
-  }
-
-  // 2. Issue key prefix — "DCC-123" → "DCC"
-  for (const f of ['issueKey', 'issue', 'issueIdOrKey', 'sourceIssue', 'targetIssue', 'epicKey']) {
-    const v = args[f];
-    if (v) {
-      const m = String(v).match(/^([A-Z][A-Z0-9]+)-\d+/);
-      if (m) { const t = tenants.get(projMap.get(m[1])); if (t?.child?.alive) return t; }
-    }
-  }
-
-  // 3. Explicit project / space key
-  for (const f of ['projectKey', 'project', 'projectId', 'spaceKey', 'spaceId']) {
-    const v = args[f];
-    if (v) { const t = tenants.get(projMap.get(String(v).toUpperCase())); if (t?.child?.alive) return t; }
-  }
-
-  // 4. JQL project clause
-  if (args.jql) {
-    const m = String(args.jql).match(/\bproject\s*(?:=|~|in\s*\()\s*"?'?([A-Z][A-Z0-9]*)"?'?/i);
-    if (m) { const t = tenants.get(projMap.get(m[1].toUpperCase())); if (t?.child?.alive) return t; }
-  }
-
-  // 5. CQL space clause
-  if (args.cql) {
-    const m = String(args.cql).match(/\bspace\s*=\s*"?'?([A-Z][A-Z0-9]*)"?'?/i);
-    if (m) { const t = tenants.get(projMap.get(m[1].toUpperCase())); if (t?.child?.alive) return t; }
-  }
-
-  return null;
-}
-
-// routeKey: same logic as routeToTenant but returns the key string only,
-// without requiring the child to be alive (used for lazy connect decisions).
+// routeKey: returns the account key for a given tool-call params object.
+// Does NOT require the child to be alive (used for lazy connect decisions).
 function routeKey(params) {
   const args = params?.arguments ?? {};
   if (args.cloudId) {
     const key = cloudIdMap.get(args.cloudId);
     if (key) return key;
+    // Fallback: match by tenant URL (Copilot passes full URL instead of UUID)
+    if (args.cloudId.startsWith('https://')) {
+      const norm = args.cloudId.endsWith('/') ? args.cloudId : args.cloudId + '/';
+      for (const [k, a] of tenants) { if (a.tenantUrl === norm) return k; }
+    }
   }
   for (const f of ['issueKey', 'issue', 'issueIdOrKey', 'sourceIssue', 'targetIssue', 'epicKey']) {
     const v = args[f];
@@ -496,29 +463,47 @@ async function writeConfig() {
   }
   const tmp = CONFIG + '.tmp';
   await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  const { rename } = await import('node:fs/promises');
   await rename(tmp, CONFIG);
 }
 
 // ─── Management tool handlers ─────────────────────────────────────────────────
 function handleListAccounts() {
   if (!tenants.size) {
-    return { content: [{ type: 'text', text: 'No accounts configured yet. Use atlassian_add_account to add one.' }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ accounts: [], summary: { total: 0, connected: 0, disconnected: 0 } }) }] };
   }
-  const lines = [];
+
+  const accounts = [];
   for (const [key, a] of tenants) {
-    const status  = !a.connected ? 'not connected' : (a.child?.alive ? 'connected ✓' : 'disconnected');
-    const ids     = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(not yet discovered)';
+    const alive   = a.child?.alive;
     const retries = a.retries ?? 0;
-    lines.push(`${key}  [${status}]${retries > 0 ? `  (reconnect attempt ${retries}/${RECONNECT_MAX_RETRIES})` : ''}`);
-    lines.push(`  URL      : ${a.tenantUrl}`);
-    lines.push(`  Label    : ${a.label ?? key}`);
-    lines.push(`  CloudId  : ${ids}`);
-    lines.push(`  Projects : ${(a.projects ?? []).join(', ') || '—'}`);
-    lines.push(`  Spaces   : ${(a.spaces   ?? []).join(', ') || '—'}`);
-    lines.push('');
+    const status  = !a.connected ? 'not_connected'
+                  : !alive       ? (retries > 0 ? 'reconnecting' : 'disconnected')
+                  : 'connected';
+
+    accounts.push({
+      key,
+      label:      a.label ?? key,
+      url:        a.tenantUrl,
+      status,
+      reconnectAttempt: retries > 0 ? { current: retries, max: RECONNECT_MAX_RETRIES } : null,
+      cloudIds:   [...a.cloudIds],
+      projects:   a.projects ?? [],
+      spaces:     a.spaces   ?? [],
+    });
   }
-  return { content: [{ type: 'text', text: lines.join('\n').trim() }] };
+
+  const connected    = accounts.filter(a => a.status === 'connected').length;
+  const disconnected = accounts.filter(a => a.status !== 'connected').length;
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        summary: { total: accounts.length, connected, disconnected },
+        accounts,
+      }, null, 2),
+    }],
+  };
 }
 
 async function handleAddAccount(args) {
@@ -748,7 +733,8 @@ function shutdown(signal) {
   process.exit(0);
 }
 
-// ─── Process safety net ───────────────────────────────────────────────────────// stdout EPIPE: the MCP host closed the pipe while we were still writing.
+// ─── Process safety net ───────────────────────────────────────────────────────
+// stdout EPIPE: the MCP host closed the pipe while we were still writing.
 // Trigger graceful shutdown instead of letting uncaughtException swallow it.
 process.stdout.on('error', err => {
   if (err.code === 'EPIPE') {

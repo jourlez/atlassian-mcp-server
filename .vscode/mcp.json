@@ -3,7 +3,7 @@
     "atlassian": {
       "type": "stdio",
       "command": "node",
-      "args": ["${workspaceFolder}/proxy/index.mjs"]
+      "args": ["/Users/jourlez/Documents/Code/atlassian-mcp-server/proxy/index.mjs"]
     }
   }
 }
