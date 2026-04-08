@@ -1,0 +1,59 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily at 06:00 UTC
+  workflow_dispatch:       # manual trigger
+
+jobs:
+  sync:
+    name: Sync from atlassian/atlassian-mcp-server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/atlassian/atlassian-mcp-server.git
+          git fetch upstream main
+
+      - name: Check for new upstream commits
+        id: diff
+        run: |
+          COUNT=$(git rev-list --count HEAD..upstream/main)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Create sync branch and PR
+        if: steps.diff.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="upstream-sync/$(date +%Y-%m-%d)"
+          git checkout -b "$BRANCH"
+          git merge upstream/main --no-edit --strategy-option=ours || {
+            # If merge has conflicts, commit the conflict markers so the PR is reviewable
+            git add -A
+            git commit -m "chore: upstream sync $(date +%Y-%m-%d) [has conflicts — review required]"
+          }
+          git push origin "$BRANCH"
+
+          COMMITS=$(git log --oneline HEAD~${{ steps.diff.outputs.count }}..HEAD)
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: upstream sync $(date +%Y-%m-%d) (${{ steps.diff.outputs.count }} commits)" \
+            --body "## Upstream changes from [atlassian/atlassian-mcp-server](https://github.com/atlassian/atlassian-mcp-server)
+
+          **${{ steps.diff.outputs.count }} new commit(s):**
+
+          \`\`\`
+          $COMMITS
+          \`\`\`
+
+          Review the diff carefully before merging — upstream changes may conflict with local proxy customisations in \`proxy/index.mjs\` and \`scripts/manage-accounts.mjs\`."
