@@ -28,11 +28,11 @@
  *   - Configurable timeouts via env vars
  */
 
-import { spawn }           from 'node:child_process';
-import { readFile }        from 'node:fs/promises';
-import { createInterface } from 'node:readline';
-import { fileURLToPath }   from 'node:url';
-import path                from 'node:path';
+import { spawn }                    from 'node:child_process';
+import { readFile, writeFile }      from 'node:fs/promises';
+import { createInterface }          from 'node:readline';
+import { fileURLToPath }            from 'node:url';
+import path                         from 'node:path';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DIR     = path.dirname(fileURLToPath(import.meta.url));
@@ -72,20 +72,67 @@ const uid = () => `__p${++_seq}__`;
 // ─── Constants ────────────────────────────────────────────────────────────────
 const FANOUT_MERGE_TOOLS = new Set(['getAccessibleAtlassianResources']);
 
-const MGMT_TOOL = {
-  name: 'get_atlassian_connections',
-  description:
-    'Show connection status and discovered cloudIds of all configured Atlassian tenants. ' +
-    'Normal tool calls are routed automatically — you do not need to call this first.',
-  inputSchema: { type: 'object', properties: {}, required: [] },
-};
+// Management tools — always exposed regardless of how many tenants are connected.
+const MGMT_TOOLS = [
+  {
+    name: 'atlassian_list_accounts',
+    description: 'List all configured Atlassian accounts and their connection status. Use this to see which workspaces are available.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'atlassian_add_account',
+    description:
+      'Add a new Atlassian account (workspace) to this MCP server. ' +
+      'Provide the site URL (e.g. https://mycompany.atlassian.net). ' +
+      'The user will be prompted to authenticate in their browser. ' +
+      'Optionally list project keys and space keys to enable direct routing without fan-out.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tenantUrl: {
+          type: 'string',
+          description: 'Atlassian site URL, e.g. https://mycompany.atlassian.net',
+        },
+        label: {
+          type: 'string',
+          description: 'Human-readable label for this account (optional)',
+        },
+        projects: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Jira project keys hosted on this site, e.g. ["DCC", "WORK"]',
+        },
+        spaces: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Confluence space keys hosted on this site, e.g. ["ENG", "DOCS"]',
+        },
+      },
+      required: ['tenantUrl'],
+    },
+  },
+  {
+    name: 'atlassian_remove_account',
+    description: 'Remove an Atlassian account from this MCP server and disconnect it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: {
+          type: 'string',
+          description: 'Account key as shown by atlassian_list_accounts (e.g. "decentralchain")',
+        },
+      },
+      required: ['key'],
+    },
+  },
+];
+const MGMT_TOOL_NAMES = new Set(MGMT_TOOLS.map(t => t.name));
 
 // ─── Config schema validation ─────────────────────────────────────────────────
 function validateConfig(raw) {
   if (typeof raw !== 'object' || raw === null) throw new Error('accounts.json must be a JSON object');
   if (typeof raw.accounts !== 'object' || raw.accounts === null) throw new Error('accounts.json must have an "accounts" object');
   const entries = Object.entries(raw.accounts);
-  if (entries.length === 0) throw new Error('accounts.json "accounts" must have at least one entry');
   for (const [key, acct] of entries) {
     if (typeof acct.tenantUrl !== 'string' || !acct.tenantUrl.startsWith('https://')) {
       throw new Error(`accounts["${key}"].tenantUrl must be an https:// URL`);
@@ -436,22 +483,125 @@ function fanOutFirst(method, params, parentId) {
   });
 }
 
-// ─── Management tool ──────────────────────────────────────────────────────────
-function handleGetConnections() {
+// ─── Config persistence ───────────────────────────────────────────────────────
+async function writeConfig() {
+  const data = { accounts: {} };
+  for (const [key, a] of tenants) {
+    data.accounts[key] = {
+      tenantUrl: a.tenantUrl,
+      label:     a.label ?? key,
+      projects:  a.projects ?? [],
+      spaces:    a.spaces   ?? [],
+    };
+  }
+  const tmp = CONFIG + '.tmp';
+  await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  const { rename } = await import('node:fs/promises');
+  await rename(tmp, CONFIG);
+}
+
+// ─── Management tool handlers ─────────────────────────────────────────────────
+function handleListAccounts() {
+  if (!tenants.size) {
+    return { content: [{ type: 'text', text: 'No accounts configured yet. Use atlassian_add_account to add one.' }] };
+  }
   const lines = [];
   for (const [key, a] of tenants) {
-    const status  = !a.connected ? 'failed' : (a.child?.alive ? 'connected' : 'disconnected');
-    const ids     = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(pending)';
+    const status  = !a.connected ? 'not connected' : (a.child?.alive ? 'connected ✓' : 'disconnected');
+    const ids     = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(not yet discovered)';
     const retries = a.retries ?? 0;
     lines.push(`${key}  [${status}]${retries > 0 ? `  (reconnect attempt ${retries}/${RECONNECT_MAX_RETRIES})` : ''}`);
-    lines.push(`  Tenant  : ${a.tenantUrl}`);
-    lines.push(`  Label   : ${a.label}`);
-    lines.push(`  CloudId : ${ids}`);
-    lines.push(`  Projects: ${(a.projects ?? []).join(', ') || '—'}`);
-    lines.push(`  Spaces  : ${(a.spaces   ?? []).join(', ') || '—'}`);
+    lines.push(`  URL      : ${a.tenantUrl}`);
+    lines.push(`  Label    : ${a.label ?? key}`);
+    lines.push(`  CloudId  : ${ids}`);
+    lines.push(`  Projects : ${(a.projects ?? []).join(', ') || '—'}`);
+    lines.push(`  Spaces   : ${(a.spaces   ?? []).join(', ') || '—'}`);
     lines.push('');
   }
-  return { content: [{ type: 'text', text: lines.join('\n').trim() || 'No tenants configured.' }] };
+  return { content: [{ type: 'text', text: lines.join('\n').trim() }] };
+}
+
+async function handleAddAccount(args) {
+  let { tenantUrl, label, projects = [], spaces = [] } = args ?? {};
+  if (!tenantUrl || typeof tenantUrl !== 'string') {
+    return { content: [{ type: 'text', text: 'Error: tenantUrl is required (e.g. https://mycompany.atlassian.net)' }] };
+  }
+  // Normalise URL
+  if (!tenantUrl.startsWith('https://')) {
+    return { content: [{ type: 'text', text: 'Error: tenantUrl must start with https://' }] };
+  }
+  if (!tenantUrl.endsWith('/')) tenantUrl += '/';
+
+  // Derive a stable key from the hostname
+  let key;
+  try { key = new URL(tenantUrl).hostname.split('.')[0]; } catch {
+    return { content: [{ type: 'text', text: `Error: invalid URL — ${tenantUrl}` }] };
+  }
+  if (!key) return { content: [{ type: 'text', text: 'Error: could not derive account key from URL' }] };
+
+  // Avoid duplicates
+  if (tenants.has(key)) {
+    return { content: [{ type: 'text', text: `Account "${key}" is already configured. Use atlassian_list_accounts to see its status.` }] };
+  }
+
+  const acct = {
+    tenantUrl,
+    label: label ?? key,
+    projects: Array.isArray(projects) ? projects : [],
+    spaces:   Array.isArray(spaces)   ? spaces   : [],
+    child: null, cloudIds: new Set(), connected: false, retries: 0,
+  };
+  tenants.set(key, acct);
+  for (const p of acct.projects) projMap.set(p.toUpperCase(), key);
+  for (const s of acct.spaces)   projMap.set(s.toUpperCase(), key);
+
+  log('connecting new account', { key, tenantUrl });
+  const connected = await ensureConnected(key);
+  if (!connected) {
+    // Remove the partially-added tenant
+    tenants.delete(key);
+    for (const p of acct.projects) projMap.delete(p.toUpperCase());
+    for (const s of acct.spaces)   projMap.delete(s.toUpperCase());
+    return { content: [{ type: 'text', text: `Failed to connect to ${tenantUrl}. Check the URL and try again.` }] };
+  }
+
+  // Persist to accounts.json
+  try { await writeConfig(); } catch (err) {
+    warn('failed to persist new account to accounts.json', { key, err: err.message });
+  }
+
+  const ids = acct.cloudIds.size ? [...acct.cloudIds].join(', ') : '(discovering...)';
+  return { content: [{ type: 'text', text:
+    `✓ Account "${key}" connected successfully.\n` +
+    `  URL     : ${tenantUrl}\n` +
+    `  CloudId : ${ids}\n` +
+    `  Projects: ${acct.projects.join(', ') || '— (none specified, routing by fan-out)'}\n\n` +
+    `You can now use all Atlassian tools against this workspace.`
+  }] };
+}
+
+async function handleRemoveAccount(args) {
+  const { key } = args ?? {};
+  if (!key || typeof key !== 'string') {
+    return { content: [{ type: 'text', text: 'Error: key is required. Use atlassian_list_accounts to see account keys.' }] };
+  }
+  const acct = tenants.get(key);
+  if (!acct) {
+    return { content: [{ type: 'text', text: `No account found with key "${key}". Use atlassian_list_accounts to see available accounts.` }] };
+  }
+  // Disconnect and clean up
+  acct.child?.stop();
+  if (reconnectTimers.has(key)) { clearTimeout(reconnectTimers.get(key)); reconnectTimers.delete(key); }
+  for (const cid of acct.cloudIds) cloudIdMap.delete(cid);
+  for (const p of acct.projects ?? []) projMap.delete(p.toUpperCase());
+  for (const s of acct.spaces   ?? []) projMap.delete(s.toUpperCase());
+  tenants.delete(key);
+
+  try { await writeConfig(); } catch (err) {
+    warn('failed to persist account removal to accounts.json', { key, err: err.message });
+  }
+
+  return { content: [{ type: 'text', text: `✓ Account "${key}" removed and disconnected.` }] };
 }
 
 // ─── Main router ──────────────────────────────────────────────────────────────
@@ -484,8 +634,21 @@ async function route(msg) {
       for (const s of acct.spaces   ?? []) projMap.set(s.toUpperCase(), key);
     }
 
-    // Lazy mode: tenants connect on first use — no auth popups at startup.
-    log('proxy ready (tenants connect on first use)', { total: tenants.size });
+    // Connect the primary (first) tenant eagerly — same UX as the official Atlassian MCP.
+    // Additional tenants are connected on demand via atlassian_add_account or first use.
+    const primaryKey = [...tenants.keys()][0];
+    if (primaryKey) {
+      try {
+        await connectTenant(primaryKey, tenants.get(primaryKey), params);
+        await discoverCloudIds(primaryKey, tenants.get(primaryKey));
+        log('primary tenant connected', { key: primaryKey });
+      } catch (err) {
+        warn('primary tenant connect failed — will retry on first use', { key: primaryKey, err: err.message });
+      }
+    }
+
+    const n = liveChildren().length;
+    log('proxy ready', { connected: n, total: tenants.size });
     sendUp({ jsonrpc: '2.0', id, result: {
       protocolVersion: params?.protocolVersion ?? '2024-11-05',
       capabilities: { tools: {} },
@@ -495,16 +658,16 @@ async function route(msg) {
   }
 
   if (method === 'tools/list') {
-    // Lazy-connect the first configured tenant so the tool list is populated.
-    const firstKey = [...tenants.keys()][0];
-    const firstAcct = firstKey ? await ensureConnected(firstKey) : null;
-    const live = firstAcct ? [firstAcct] : liveChildren();
-    if (!live.length) { sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL] } }); return; }
+    const live = liveChildren();
+    if (!live.length) {
+      sendUp({ jsonrpc: '2.0', id, result: { tools: MGMT_TOOLS } });
+      return;
+    }
     try {
       const r = await live[0].child.request({ jsonrpc: '2.0', id: uid(), method: 'tools/list', params }, TIMEOUT_LIST_MS);
-      sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL, ...(r.result?.tools ?? [])] } });
+      sendUp({ jsonrpc: '2.0', id, result: { tools: [...MGMT_TOOLS, ...(r.result?.tools ?? [])] } });
     } catch {
-      sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL] } });
+      sendUp({ jsonrpc: '2.0', id, result: { tools: MGMT_TOOLS } });
     }
     return;
   }
@@ -512,8 +675,16 @@ async function route(msg) {
   if (method === 'tools/call') {
     const name = params?.name;
 
-    if (name === 'get_atlassian_connections') {
-      sendUp({ jsonrpc: '2.0', id, result: handleGetConnections() });
+    if (name === 'atlassian_list_accounts') {
+      sendUp({ jsonrpc: '2.0', id, result: handleListAccounts() });
+      return;
+    }
+    if (name === 'atlassian_add_account') {
+      sendUp({ jsonrpc: '2.0', id, result: await handleAddAccount(params?.arguments) });
+      return;
+    }
+    if (name === 'atlassian_remove_account') {
+      sendUp({ jsonrpc: '2.0', id, result: await handleRemoveAccount(params?.arguments) });
       return;
     }
 
