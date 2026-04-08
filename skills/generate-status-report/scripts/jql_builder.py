@@ -12,28 +12,71 @@ import re
 def sanitize_jql_value(value: str) -> str:
     """
     Sanitize a value for use in JQL to prevent injection attacks.
-    
+
     Args:
         value: The input value to sanitize
-        
+
     Returns:
         Sanitized value safe for JQL queries
     """
     if not value:
         return value
-    
-    # Remove or escape potentially dangerous characters
+
     # Allow alphanumeric, spaces, hyphens, underscores, dots, @
     safe_pattern = re.compile(r'^[a-zA-Z0-9\s\-_.@]+$')
-    
+
     if not safe_pattern.match(value):
         raise ValueError(
             f"Invalid characters in input: '{value}'. "
             f"Only alphanumeric characters, spaces, hyphens, underscores, dots, and @ are allowed."
         )
-    
-    # Escape double quotes by doubling them (JQL escaping)
-    return value.replace('"', '""')
+
+    # NOTE: the regex above already strips all quote characters, so the
+    # replace below is a defence-in-depth no-op — kept for clarity.
+    return value.replace('"', '\\"')
+
+
+# ORDER BY clauses contain commas and reserved JQL keywords that cannot pass
+# through sanitize_jql_value.  Validate against an explicit allow-list instead.
+_ALLOWED_ORDER_FIELDS = frozenset([
+    "priority", "updated", "created", "resolved", "duedate",
+    "status", "assignee", "reporter", "issuetype", "summary",
+    "key", "id",
+])
+_ALLOWED_ORDER_DIRECTIONS = frozenset(["asc", "desc"])
+
+
+def sanitize_order_by(order_by: str) -> str:
+    """
+    Validate and return a JQL ORDER BY clause.
+
+    Accepts only known field names and ASC/DESC directions separated by
+    commas.  Raises ValueError for any unrecognised token.
+
+    Args:
+        order_by: Raw ORDER BY clause, e.g. "priority DESC, updated DESC"
+
+    Returns:
+        The clause unchanged if valid.
+    """
+    for clause in order_by.split(","):
+        parts = clause.strip().split()
+        if not parts:
+            raise ValueError(f"Empty ORDER BY clause in: '{order_by}'")
+        field = parts[0].lower()
+        if field not in _ALLOWED_ORDER_FIELDS:
+            raise ValueError(
+                f"Unrecognised ORDER BY field '{parts[0]}'. "
+                f"Allowed: {', '.join(sorted(_ALLOWED_ORDER_FIELDS))}"
+            )
+        if len(parts) == 2 and parts[1].lower() not in _ALLOWED_ORDER_DIRECTIONS:
+            raise ValueError(
+                f"Unrecognised ORDER BY direction '{parts[1]}'. "
+                f"Allowed: ASC, DESC"
+            )
+        if len(parts) > 2:
+            raise ValueError(f"Unexpected tokens in ORDER BY clause: '{clause.strip()}'")
+    return order_by
 
 
 def sanitize_jql_list(values: List[str]) -> List[str]:
@@ -102,12 +145,11 @@ def build_project_query(
             conditions.append(f'assignee = "{assignee}"')
     
     query = " AND ".join(conditions)
-    
+
     if order_by:
-        # Validate order_by contains only safe keywords
-        order_by = sanitize_jql_value(order_by)
+        order_by = sanitize_order_by(order_by)
         query += f' ORDER BY {order_by}'
-    
+
     return query
 
 

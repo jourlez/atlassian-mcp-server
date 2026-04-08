@@ -8,7 +8,7 @@ The Atlassian Rovo MCP Server uses **OAuth 2.1** for authentication. Under the h
 
 ## Prerequisites
 
-- **Node.js v18+** — required to run `mcp-remote`
+- **Node.js v22+** — required to run `mcp-remote`
 - An Atlassian Cloud account on each tenant you want to connect
 
 ## Quick setup (automated)
@@ -118,7 +118,7 @@ rm -rf ~/.mcp-auth/<session-hash>
 
 | Symptom | Fix |
 |---|---|
-| Browser does not open for OAuth | Ensure Node.js v18+ is on `PATH`; run `node -v` to confirm |
+| Browser does not open for OAuth | Ensure Node.js v22+ is on `PATH`; run `node -v` to confirm |
 | Wrong account authenticated | Delete `~/.mcp-auth/` and re-authenticate: `rm -rf ~/.mcp-auth` |
 | Token exchange fails (HTTP 400) | Run `rm -rf ~/.mcp-auth` then restart the MCP client |
 | Tools from wrong tenant appear | Verify the `--resource` URL exactly matches `https://yoursite.atlassian.net/` |

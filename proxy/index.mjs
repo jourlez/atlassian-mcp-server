@@ -64,7 +64,6 @@ function emit(level, msg, fields = {}) {
 const log   = (msg, f) => emit('info',  msg, f);
 const warn  = (msg, f) => emit('warn',  msg, f);
 const error = (msg, f) => emit('error', msg, f);
-const debug = (msg, f) => emit('debug', msg, f);
 
 // ─── Sequence counter ─────────────────────────────────────────────────────────
 let _seq = 0;
@@ -185,8 +184,9 @@ class ChildMcp {
 const tenants    = new Map(); // key → { tenantUrl, label, projects, spaces, child, cloudIds, connected, retries }
 const cloudIdMap = new Map(); // cloudId   → accountKey
 const projMap    = new Map(); // PROJ_UPPER → accountKey
-const reconnectTimers = new Map(); // key → NodeJS.Timeout
+const reconnectTimers = new Map(); // key → timeout handle (setTimeout)
 let   initParams = null;
+let   _shuttingDown = false; // declared here — before scheduleReconnect — for clarity
 
 const sendUp = msg => process.stdout.write(JSON.stringify(msg) + '\n');
 
@@ -344,12 +344,22 @@ function fanOutFirst(method, params, parentId) {
       a.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_FANOUT_MS)
         .then(resp => {
           left--;
-          if (!done && !resp.error) { done = true; resolve({ ...resp, id: parentId }); }
-          else if (!done && left === 0) resolve({ jsonrpc: '2.0', id: parentId, error: { code: -32603, message: errors.join('; ') || 'All tenants failed.' } });
+          if (!done && !resp.error) {
+            done = true;
+            resolve({ ...resp, id: parentId });
+          } else {
+            // Tenant responded but with a JSON-RPC error — collect the message
+            if (resp.error?.message) errors.push(resp.error.message);
+            if (!done && left === 0) {
+              resolve({ jsonrpc: '2.0', id: parentId, error: { code: -32603, message: errors.join('; ') || 'All tenants failed.' } });
+            }
+          }
         })
         .catch(err => {
           left--; errors.push(err.message);
-          if (!done && left === 0) resolve({ jsonrpc: '2.0', id: parentId, error: { code: -32603, message: errors.join('; ') } });
+          if (!done && left === 0) {
+            resolve({ jsonrpc: '2.0', id: parentId, error: { code: -32603, message: errors.join('; ') } });
+          }
         });
     }
   });
@@ -473,7 +483,6 @@ async function route(msg) {
 }
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
-let _shuttingDown = false;
 function shutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;

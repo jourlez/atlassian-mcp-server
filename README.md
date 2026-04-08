@@ -51,7 +51,7 @@ Before connecting to the Atlassian Rovo MCP Server, review the setup requirement
 
 * An **Atlassian Cloud site** with Jira, Compass, and/or Confluence
 * A supported IDE (for example, **Claude desktop, VS Code, or Cursor**) or a custom MCP-compatible client
-* **Node.js v18+** installed to run the local MCP proxy (`mcp-remote`)
+* **Node.js v22+** installed to run the local MCP proxy (`mcp-remote`)
 * A modern browser for completing OAuth login, or API token credentials for headless authentication
 
 ---
@@ -165,7 +165,7 @@ The `mcp-remote` proxy implements [RFC 8707 Resource Indicators](https://datatra
 
 ### Prerequisites
 
-* **Node.js v18+** on your system `PATH`
+* **Node.js v22+** on your system `PATH`
 
 ### Automated setup
 

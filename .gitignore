@@ -1,3 +1,8 @@
+# ─── Local reference / scratch files ─────────────────────────────────────────
+# comparison.mc is a local copy of a Medium article used as reference material.
+# It has no runtime role and must not be re-committed.
+comparison.mc
+
 # ─── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
 .npm/
