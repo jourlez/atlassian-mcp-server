@@ -1,0 +1,24 @@
+# Development / local files — not needed by npm consumers
+comparison.mc
+.mcp-auth/
+proxy/accounts.json
+.env
+.env.*
+.DS_Store
+*.log
+npm-debug.log*
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+.cursor/
+.cursor-plugin/
+gemini-extension.json
+images/
+assets/
+skills/
+CONTRIBUTING.md
+SECURITY.md
+CODE_OF_CONDUCT.md
+CODEOWNERS

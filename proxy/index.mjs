@@ -154,13 +154,16 @@ class ChildMcp {
   }
 
   start() {
+    this._authUrl     = null;       // OAuth URL captured from stderr, if auth is needed
+    this._authWaiters = [];         // resolve callbacks waiting for _authUrl
+
     this._proc = spawn(
       'npx',
       // Pinned version — never @latest — prevents silent drift and supply chain attacks.
       // --silent placed after the positional URL so commander.js parses it as a flag,
       // not as a second positional argument.  (Added in mcp-remote v0.1.35.)
       ['-y', `mcp-remote@${MCP_REMOTE_VERSION}`, MCP_URL, '--resource', this.tenantUrl, '--silent'],
-      { stdio: ['pipe', 'pipe', 'inherit'] },
+      { stdio: ['pipe', 'pipe', 'pipe'] }, // pipe all 3 — stderr parsed for auth URL
     );
     // Absorb EPIPE / write-after-close errors on the child's stdin so they
     // don't surface as uncaughtExceptions.  The exitCode guard in request()
@@ -171,6 +174,24 @@ class ChildMcp {
         error('child stdin write error', { key: this.key, code: err.code, err: err.message });
       }
     });
+
+    // Pipe stderr: forward each line to our own stderr (keeps VS Code Output working)
+    // and watch for the OAuth authorization URL so it can be surfaced in chat.
+    const errRl = createInterface({ input: this._proc.stderr, crlfDelay: Infinity });
+    errRl.on('line', line => {
+      process.stderr.write(line + '\n');
+      if (!this._authUrl) {
+        // mcp-remote prints: "Please authorize this client by visiting:\nhttps://..."
+        // or sometimes on the same line. Match both forms.
+        const m = line.match(/https:\/\/mcp\.atlassian\.com\/v1\/authorize\S*/);
+        if (m) {
+          this._authUrl = m[0];
+          for (const fn of this._authWaiters) fn(this._authUrl);
+          this._authWaiters = [];
+        }
+      }
+    });
+
     this._rl = createInterface({ input: this._proc.stdout, crlfDelay: Infinity });
     this._rl.on('line', raw => {
       const line = raw.trim();
@@ -216,6 +237,16 @@ class ChildMcp {
     if (this._proc?.exitCode === null) {
       this._proc.stdin.write(JSON.stringify(msg) + '\n');
     }
+  }
+
+  // Resolves with the OAuth URL as soon as mcp-remote emits it on stderr,
+  // or null if no URL appears within timeoutMs (token was already cached).
+  waitForAuthUrl(timeoutMs = 5000) {
+    return new Promise(resolve => {
+      if (this._authUrl) return resolve(this._authUrl);
+      this._authWaiters.push(resolve);
+      setTimeout(() => resolve(null), timeoutMs);
+    });
   }
 
   stop() {
@@ -317,6 +348,9 @@ async function ensureConnected(key) {
 async function connectTenant(key, acct, params) {
   const child = new ChildMcp(key, acct.tenantUrl);
   child.start();
+  // Expose the child immediately so callers (e.g. handleAddAccount) can read
+  // _authUrl from stderr before initialize() completes.
+  acct.child = child;
   const resp = await child.request(
     { jsonrpc: '2.0', id: uid(), method: 'initialize', params },
     TIMEOUT_INIT_MS,
@@ -509,24 +543,30 @@ function handleListAccounts() {
 async function handleAddAccount(args) {
   let { tenantUrl, label, projects = [], spaces = [] } = args ?? {};
   if (!tenantUrl || typeof tenantUrl !== 'string') {
-    return { content: [{ type: 'text', text: 'Error: tenantUrl is required (e.g. https://mycompany.atlassian.net)' }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'tenantUrl is required (e.g. https://mycompany.atlassian.net)' }) }] };
   }
   // Normalise URL
   if (!tenantUrl.startsWith('https://')) {
-    return { content: [{ type: 'text', text: 'Error: tenantUrl must start with https://' }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'tenantUrl must start with https://' }) }] };
   }
   if (!tenantUrl.endsWith('/')) tenantUrl += '/';
 
   // Derive a stable key from the hostname
   let key;
   try { key = new URL(tenantUrl).hostname.split('.')[0]; } catch {
-    return { content: [{ type: 'text', text: `Error: invalid URL — ${tenantUrl}` }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ error: `invalid URL — ${tenantUrl}` }) }] };
   }
-  if (!key) return { content: [{ type: 'text', text: 'Error: could not derive account key from URL' }] };
+  if (!key) return { content: [{ type: 'text', text: JSON.stringify({ error: 'could not derive account key from URL' }) }] };
 
   // Avoid duplicates
   if (tenants.has(key)) {
-    return { content: [{ type: 'text', text: `Account "${key}" is already configured. Use atlassian_list_accounts to see its status.` }] };
+    const a = tenants.get(key);
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: a.child?.alive ? 'already_connected' : 'already_configured',
+      key,
+      tenantUrl: a.tenantUrl,
+      message: `Account "${key}" is already configured. Use atlassian_list_accounts to see its status.`,
+    }) }] };
   }
 
   const acct = {
@@ -541,38 +581,81 @@ async function handleAddAccount(args) {
   for (const s of acct.spaces)   projMap.set(s.toUpperCase(), key);
 
   log('connecting new account', { key, tenantUrl });
-  const connected = await ensureConnected(key);
-  if (!connected) {
-    // Remove the partially-added tenant
+
+  // Race: either we connect quickly (cached token) or mcp-remote needs OAuth
+  // and emits an authorization URL on stderr within the detection window.
+  const AUTH_DETECT_MS = 5000;
+  const connectPromise = ensureConnected(key); // starts mcp-remote child
+
+  const outcome = await Promise.race([
+    connectPromise.then(r => ({ type: r ? 'connected' : 'failed' })),
+    new Promise(resolve => setTimeout(() => resolve({ type: 'timeout' }), AUTH_DETECT_MS)),
+  ]);
+
+  if (outcome.type === 'connected') {
+    // Token was already cached — connected immediately.
+    try { await writeConfig(); } catch (err) { warn('failed to persist account', { key, err: err.message }); }
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: 'connected',
+      key,
+      tenantUrl,
+      cloudIds: [...acct.cloudIds],
+      projects: acct.projects,
+      spaces:   acct.spaces,
+      message:  `Account "${key}" connected and ready. You can now use all Atlassian tools against this workspace.`,
+    }, null, 2) }] };
+  }
+
+  // Check if mcp-remote emitted an OAuth URL during the detection window.
+  const authUrl = acct.child?._authUrl;
+  if (authUrl) {
+    // Persist the pending account so it survives a proxy restart.
+    try { await writeConfig(); } catch (err) { warn('failed to persist pending account', { key, err: err.message }); }
+    // connectPromise continues running in background — mcp-remote is waiting
+    // for the browser callback. Once the user approves, the child completes
+    // its initialize handshake and the account becomes live automatically.
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: 'auth_required',
+      key,
+      tenantUrl,
+      authUrl,
+      message: `Authorization required for "${key}". Open the authUrl in your browser and sign in with the account for ${tenantUrl}. Once approved, your next query to this workspace will connect automatically — no further action needed.`,
+    }, null, 2) }] };
+  }
+
+  // Neither quick-connected nor auth URL seen: wait for the full connect.
+  const finalConnected = await connectPromise;
+  if (!finalConnected) {
     tenants.delete(key);
     for (const p of acct.projects) projMap.delete(p.toUpperCase());
     for (const s of acct.spaces)   projMap.delete(s.toUpperCase());
-    return { content: [{ type: 'text', text: `Failed to connect to ${tenantUrl}. Check the URL and try again.` }] };
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: 'failed',
+      tenantUrl,
+      message: `Failed to connect to ${tenantUrl}. Check the URL and try again.`,
+    }) }] };
   }
 
-  // Persist to accounts.json
-  try { await writeConfig(); } catch (err) {
-    warn('failed to persist new account to accounts.json', { key, err: err.message });
-  }
-
-  const ids = acct.cloudIds.size ? [...acct.cloudIds].join(', ') : '(discovering...)';
-  return { content: [{ type: 'text', text:
-    `✓ Account "${key}" connected successfully.\n` +
-    `  URL     : ${tenantUrl}\n` +
-    `  CloudId : ${ids}\n` +
-    `  Projects: ${acct.projects.join(', ') || '— (none specified, routing by fan-out)'}\n\n` +
-    `You can now use all Atlassian tools against this workspace.`
-  }] };
+  try { await writeConfig(); } catch (err) { warn('failed to persist account', { key, err: err.message }); }
+  return { content: [{ type: 'text', text: JSON.stringify({
+    status: 'connected',
+    key,
+    tenantUrl,
+    cloudIds: [...acct.cloudIds],
+    projects: acct.projects,
+    spaces:   acct.spaces,
+    message:  `Account "${key}" connected and ready.`,
+  }, null, 2) }] };
 }
 
 async function handleRemoveAccount(args) {
   const { key } = args ?? {};
   if (!key || typeof key !== 'string') {
-    return { content: [{ type: 'text', text: 'Error: key is required. Use atlassian_list_accounts to see account keys.' }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'key is required. Use atlassian_list_accounts to see account keys.' }) }] };
   }
   const acct = tenants.get(key);
   if (!acct) {
-    return { content: [{ type: 'text', text: `No account found with key "${key}". Use atlassian_list_accounts to see available accounts.` }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ error: `No account found with key "${key}". Use atlassian_list_accounts to see available accounts.` }) }] };
   }
   // Disconnect and clean up
   acct.child?.stop();
@@ -586,7 +669,7 @@ async function handleRemoveAccount(args) {
     warn('failed to persist account removal to accounts.json', { key, err: err.message });
   }
 
-  return { content: [{ type: 'text', text: `✓ Account "${key}" removed and disconnected.` }] };
+  return { content: [{ type: 'text', text: JSON.stringify({ status: 'removed', key, message: `Account "${key}" removed and disconnected.` }) }] };
 }
 
 // ─── Main router ──────────────────────────────────────────────────────────────
