@@ -3,15 +3,19 @@
 /**
  * Atlassian MCP Account Manager
  *
- * Manages proxy/accounts.json — the config for the seamless multi-tenant proxy.
+ * Manages ~/.atlassian-mcp/accounts.json — the config for the seamless multi-tenant proxy.
  * All accounts are always connected simultaneously; there is no "active" account.
  *
+ * Config file location:
+ *   1. $ATLASSIAN_MCP_CONFIG env var (explicit override)
+ *   2. ~/.atlassian-mcp/accounts.json (default — stable across npx installs)
+ *
  * Usage:
- *   node scripts/manage-accounts.mjs              # interactive menu
- *   node scripts/manage-accounts.mjs list         # list all accounts
- *   node scripts/manage-accounts.mjs add          # add an account
- *   node scripts/manage-accounts.mjs remove       # remove an account
- *   node scripts/manage-accounts.mjs logout       # clear OAuth tokens
+ *   npx @jourlez/atlassian-mcp-server manage-accounts         # interactive menu
+ *   npx @jourlez/atlassian-mcp-server manage-accounts list    # list all accounts
+ *   npx @jourlez/atlassian-mcp-server manage-accounts add     # add an account
+ *   npx @jourlez/atlassian-mcp-server manage-accounts remove  # remove an account
+ *   npx @jourlez/atlassian-mcp-server manage-accounts logout  # clear OAuth tokens
  */
 
 import { promises as fs } from 'node:fs';
@@ -20,12 +24,13 @@ import * as path from 'node:path';
 import * as rl   from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
-const DIR         = path.resolve(import.meta.dirname, '..', 'proxy');
-const CONFIG_FILE = path.join(DIR, 'accounts.json');
+const CONFIG_FILE = process.env.ATLASSIAN_MCP_CONFIG
+  ?? path.join(os.homedir(), '.atlassian-mcp', 'accounts.json');
 const MCP_AUTH    = path.join(os.homedir(), '.mcp-auth');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const EXAMPLE_FILE = path.join(DIR, 'accounts.example.json');
+// Example file ships with the npm package — used for bootstrapping fresh installs.
+const EXAMPLE_FILE = path.resolve(import.meta.dirname, '..', 'proxy', 'accounts.example.json');
 
 async function readConfig() {
   try {
@@ -54,6 +59,7 @@ async function writeConfig(cfg) {
   // Atomic write: write to a temp file first, then rename into place.
   // This guarantees the config is never left in a partial/corrupt state
   // if the process is killed mid-write (POSIX rename is atomic).
+  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true, mode: 0o700 });
   const tmp = CONFIG_FILE + '.tmp';
   await fs.writeFile(tmp, JSON.stringify(cfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
   await fs.rename(tmp, CONFIG_FILE);

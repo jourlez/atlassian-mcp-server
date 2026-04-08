@@ -15,7 +15,7 @@
  *   5. Fan-out to all tenants    → first non-error wins
  *      (getAccessibleAtlassianResources: fan-out + MERGE all results)
  *
- * Config  : proxy/accounts.json
+ * Config  : ~/.atlassian-mcp/accounts.json  (or $ATLASSIAN_MCP_CONFIG)
  * Tokens  : ~/.mcp-auth/ (managed by mcp-remote, one slot per tenant)
  *
  * Enterprise features:
@@ -28,15 +28,18 @@
  *   - Configurable timeouts via env vars
  */
 
-import { spawn }                    from 'node:child_process';
-import { readFile, rename, writeFile } from 'node:fs/promises';
-import { createInterface }          from 'node:readline';
-import { fileURLToPath }            from 'node:url';
-import path                         from 'node:path';
+import { spawn }                          from 'node:child_process';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import os                                 from 'node:os';
+import { createInterface }               from 'node:readline';
+import path                              from 'node:path';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const DIR     = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG  = path.join(DIR, 'accounts.json');
+// Config file location:
+//   1. $ATLASSIAN_MCP_CONFIG env var (explicit override)
+//   2. ~/.atlassian-mcp/accounts.json (default — stable across npx installs)
+const CONFIG  = process.env.ATLASSIAN_MCP_CONFIG
+  ?? path.join(os.homedir(), '.atlassian-mcp', 'accounts.json');
 const MCP_URL = 'https://mcp.atlassian.com/v1/mcp';
 
 // Pin to exact version — never use @latest in production (supply chain risk)
@@ -495,6 +498,7 @@ async function writeConfig() {
       spaces:    a.spaces   ?? [],
     };
   }
+  await mkdir(path.dirname(CONFIG), { recursive: true, mode: 0o700 });
   const tmp = CONFIG + '.tmp';
   await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
   await rename(tmp, CONFIG);
