@@ -510,28 +510,45 @@ function handleListAccounts() {
     return { content: [{ type: 'text', text: 'No accounts configured yet. Use atlassian_add_account to add one.' }] };
   }
 
-  const lines = [];
+  const total     = tenants.size;
+  const connected = [...tenants.values()].filter(a => a.child?.alive).length;
+  const lines     = [`Atlassian Workspaces — ${connected} of ${total} connected`, ''];
+  const lazyKeys  = [];
+
   for (const [key, a] of tenants) {
     const alive   = a.child?.alive;
     const retries = a.retries ?? 0;
-    const status  = !a.connected ? '🔴 not connected'
-                  : !alive       ? (retries > 0 ? `🟡 reconnecting (${retries}/${RECONNECT_MAX_RETRIES})` : '🟡 disconnected')
-                  : '🟢 connected';
-    const ids = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(not yet discovered)';
+    const label   = a.label ?? key;
 
-    lines.push(`${a.label ?? key}  ${status}`);
-    lines.push(`  Key      : ${key}`);
-    lines.push(`  URL      : ${a.tenantUrl}`);
-    lines.push(`  CloudId  : ${ids}`);
-    lines.push(`  Projects : ${(a.projects ?? []).join(', ') || '—'}`);
-    lines.push(`  Spaces   : ${(a.spaces   ?? []).join(', ') || '—'}`);
+    let dot, detail;
+    if (!a.connected) {
+      dot    = '🔴';
+      detail = '(lazy — will connect on first use)';
+      lazyKeys.push(key);
+    } else if (!alive) {
+      dot    = retries > 0 ? '🟡' : '🔴';
+      detail = retries > 0 ? `reconnecting (${retries}/${RECONNECT_MAX_RETRIES})` : '(disconnected)';
+    } else {
+      dot    = '🟢';
+      const shortIds = [...a.cloudIds].map(id => id.slice(0, 8)).join(', ');
+      detail = shortIds ? `Cloud: ${shortIds}` : '';
+    }
+
+    const projects = (a.projects ?? []).join(' ') || '—';
+    const parts    = [key, `Projects: ${projects}`, detail].filter(Boolean);
+
+    lines.push(`${dot} ${label}`);
+    lines.push(`  ${parts.join(' · ')}`);
     lines.push('');
   }
 
-  const total       = tenants.size;
-  const connected   = [...tenants.values()].filter(a => a.child?.alive).length;
-  const disconnected = total - connected;
-  lines.push(`${connected}/${total} connected  ·  ${disconnected} disconnected`);
+  if (lazyKeys.length) {
+    const keyList = lazyKeys.length === 1
+      ? lazyKeys[0]
+      : lazyKeys.slice(0, -1).join(', ') + ' and ' + lazyKeys[lazyKeys.length - 1];
+    const verb = lazyKeys.length === 1 ? 'is' : 'are';
+    lines.push(`${keyList} ${verb} \`not_connected\` because they haven't been touched since the restart — they'll connect the moment you query them.`);
+  }
 
   return { content: [{ type: 'text', text: lines.join('\n').trim() }] };
 }
