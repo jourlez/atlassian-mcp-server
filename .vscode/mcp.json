@@ -3,7 +3,7 @@
     "atlassian": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@jourlez/atlassian-mcp-server"]
+      "args": ["-y", "@jourlez/atlassian-mcp-server@latest"]
     }
   }
 }

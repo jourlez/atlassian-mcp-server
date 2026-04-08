@@ -17,15 +17,7 @@ A multi-tenant MCP proxy that connects **all your Atlassian Cloud workspaces sim
 
 ## Quick start
 
-### 1. Add your first account
-
-```bash
-npx @jourlez/atlassian-mcp-server manage-accounts add
-```
-
-You'll be prompted for your tenant URL (e.g. `https://my-company.atlassian.net`). A browser window opens for OAuth consent. Config is saved to `~/.atlassian-mcp/accounts.json`.
-
-### 2. Configure your MCP client
+### 1. Configure your MCP client
 
 **VS Code** — create or edit `.vscode/mcp.json` in your workspace:
 
@@ -67,18 +59,36 @@ You'll be prompted for your tenant URL (e.g. `https://my-company.atlassian.net`)
 }
 ```
 
-Restart your client. OAuth login runs once — subsequent starts are instant.
+### 2. Add your Atlassian account(s)
+
+Restart your client, then ask the AI:
+
+> "Add my Atlassian account at https://my-company.atlassian.net"
+
+The AI calls `atlassian_add_account`, a browser window opens for OAuth consent, and your account is saved to `~/.atlassian-mcp/accounts.json`. Repeat for each workspace you want to connect.
 
 ---
 
 ## Managing accounts
 
+Ask the AI directly — no terminal needed:
+
+- **"List my Atlassian accounts"** → calls `atlassian_list_accounts`
+- **"Add my Atlassian account at https://my-company.atlassian.net"** → calls `atlassian_add_account`
+- **"Remove the acme account"** → calls `atlassian_remove_account`
+
+> To clear stored OAuth tokens, use `atlassian-mcp-accounts logout` from the terminal — there is no AI tool for that.
+
+Prefer the terminal? Install the CLI:
+
 ```bash
-npx @jourlez/atlassian-mcp-server manage-accounts          # interactive menu
-npx @jourlez/atlassian-mcp-server manage-accounts list     # show all configured tenants + status
-npx @jourlez/atlassian-mcp-server manage-accounts add      # add a new tenant
-npx @jourlez/atlassian-mcp-server manage-accounts remove   # remove a tenant
-npx @jourlez/atlassian-mcp-server manage-accounts logout   # clear stored OAuth tokens
+npm install -g @jourlez/atlassian-mcp-server
+
+atlassian-mcp-accounts          # interactive menu
+atlassian-mcp-accounts list     # show all configured tenants
+atlassian-mcp-accounts add      # add a new tenant
+atlassian-mcp-accounts remove   # remove a tenant
+atlassian-mcp-accounts logout   # clear stored OAuth tokens (~/.mcp-auth)
 ```
 
 Config is stored in `~/.atlassian-mcp/accounts.json`. You can also set `ATLASSIAN_MCP_CONFIG=/path/to/accounts.json` to override the location.
@@ -158,7 +168,7 @@ Pre-built prompt skills for common workflows (status reports, triage, backlog ge
 | Symptom | Fix |
 |---|---|
 | `could not determine executable to run` | `rm -rf ~/.npm/_npx` then restart |
-| `Config error` on startup | Run `manage-accounts add` — config file doesn't exist yet |
+| `Config error` on startup | Ask the AI to add your account, or run `atlassian-mcp-accounts add` |
 | OAuth browser window doesn't open | Check client logs for the auth URL and open it manually |
 | Only one tenant's tools visible | Run `atlassian_list_accounts` — additional tenants connect on first use |
 | `403 Forbidden` on tool calls | Your Atlassian admin may need to enable Rovo MCP for your org |
