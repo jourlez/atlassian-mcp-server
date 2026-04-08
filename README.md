@@ -215,6 +215,63 @@ Restart your MCP client after editing the config. A browser window opens for eac
 
 ---
 
+## Visual Studio Code setup
+
+> **Prerequisites:** [Node.js v22+](https://nodejs.org/) · VS Code with [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) (or any MCP-compatible extension)
+
+### Single account
+
+Add the following to your workspace `.vscode/mcp.json` (create it if it doesn't exist):
+
+```json
+{
+  "servers": {
+    "atlassian": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@jourlez/atlassian-mcp-server"]
+    }
+  }
+}
+```
+
+Restart VS Code or click **Restart** next to the server in the MCP panel. A browser window will open for OAuth login on first use.
+
+> **First run only:** `npx` downloads the package on first launch (~5 s). Subsequent starts are instant from cache.
+
+### Multiple accounts (seamless mode)
+
+For multiple Atlassian tenants, use `accounts.json` to configure all of them. The proxy connects all tenants simultaneously and routes requests automatically — no manual switching required.
+
+**Step 1 — Add accounts interactively:**
+
+```bash
+npx @jourlez/atlassian-mcp-server manage-accounts add
+```
+
+This stores your tenant config in `~/.atlassian-mcp/accounts.json` and prompts for OAuth consent in your browser.
+
+**Step 2 — Use the same `.vscode/mcp.json` as above.** The proxy reads `~/.atlassian-mcp/accounts.json` automatically.
+
+**Manage accounts at any time:**
+
+```bash
+npx @jourlez/atlassian-mcp-server manage-accounts        # interactive menu
+npx @jourlez/atlassian-mcp-server manage-accounts list   # show all configured tenants
+npx @jourlez/atlassian-mcp-server manage-accounts remove # remove a tenant
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `could not determine executable to run` | Clear the npx cache: `rm -rf ~/.npm/_npx` then restart VS Code |
+| `Config error: accounts.json not found` | Run `npx @jourlez/atlassian-mcp-server manage-accounts add` to create your first account |
+| OAuth browser window doesn't open | Check VS Code Output → MCP for the auth URL and open it manually |
+| Tools show for one tenant only | All tenants connect on startup — run `atlassian_list_accounts` to verify status |
+
+---
+
 ## Admin notes: Managing access
 
 If you're an admin preparing your organization to use the Atlassian Rovo MCP Server, review these key considerations. For more detailed admin guidance, see:
