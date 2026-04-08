@@ -52,7 +52,7 @@ Replace or augment the default `atlassian` entry with one entry per account. See
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://YOUR-FIRST-TENANT.atlassian.net/"
@@ -63,7 +63,7 @@ Replace or augment the default `atlassian` entry with one entry per account. See
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://YOUR-SECOND-TENANT.atlassian.net/"

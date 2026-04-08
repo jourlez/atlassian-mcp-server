@@ -8,6 +8,10 @@ node_modules/
 *.token
 *.oauth
 
+# ─── Atlassian tenant configuration (contains tenant URLs — gitignore for forks)
+# Copy proxy/accounts.example.json → proxy/accounts.json to set up your tenants.
+proxy/accounts.json
+
 # ─── Environment / secrets ────────────────────────────────────────────────────
 .env
 .env.*

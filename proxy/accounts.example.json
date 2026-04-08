@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy this file to accounts.json and replace the placeholder values with your real Atlassian tenant details. accounts.json is gitignored — never commit real tenant configuration.",
+  "accounts": {
+    "my-company": {
+      "tenantUrl": "https://my-company.atlassian.net/",
+      "label": "My Company (my-company.atlassian.net)",
+      "projects": ["PROJ", "BACKEND", "INFRA"],
+      "spaces": ["DEV", "OPS"]
+    },
+    "second-workspace": {
+      "tenantUrl": "https://second-workspace.atlassian.net/",
+      "label": "Second Workspace (second-workspace.atlassian.net)",
+      "projects": ["DEMO"],
+      "spaces": []
+    }
+  }
+}

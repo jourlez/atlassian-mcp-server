@@ -25,12 +25,28 @@ const CONFIG_FILE = path.join(DIR, 'accounts.json');
 const MCP_AUTH    = path.join(os.homedir(), '.mcp-auth');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
+const EXAMPLE_FILE = path.join(DIR, 'accounts.example.json');
+
 async function readConfig() {
   try {
     return JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'));
   } catch (err) {
-    if (err.code === 'ENOENT') throw new Error(`Config not found: ${CONFIG_FILE}`);
-    throw err;
+    if (err.code !== 'ENOENT') throw err;
+    // accounts.json is gitignored — bootstrap from the example file if absent.
+    console.log(`\n  ${CONFIG_FILE} not found.`);
+    console.log(`  Creating it from ${EXAMPLE_FILE} — add your real tenant details with "add".\n`);
+    try {
+      const example = await fs.readFile(EXAMPLE_FILE, 'utf8');
+      const parsed = JSON.parse(example);
+      // Strip the _comment field (informational only) before writing the live config.
+      delete parsed._comment;
+      // Start with an empty accounts map so users consciously add their own.
+      parsed.accounts = {};
+      await writeConfig(parsed);
+      return parsed;
+    } catch {
+      throw new Error(`Config not found and could not bootstrap from example: ${EXAMPLE_FILE}`);
+    }
   }
 }
 

@@ -187,7 +187,7 @@ Add one entry per Atlassian tenant to your client's MCP config file, replacing t
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://company-a.atlassian.net/"
@@ -198,7 +198,7 @@ Add one entry per Atlassian tenant to your client's MCP config file, replacing t
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://company-b.atlassian.net/"

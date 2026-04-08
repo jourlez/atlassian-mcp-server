@@ -111,8 +111,9 @@ class ChildMcp {
     this._proc = spawn(
       'npx',
       // Pinned version — never @latest — prevents silent drift and supply chain attacks.
-      // --silent suppresses mcp-remote's own diagnostic output so our stderr stays clean.
-      ['-y', `mcp-remote@${MCP_REMOTE_VERSION}`, '--silent', MCP_URL, '--resource', this.tenantUrl],
+      // --silent placed after the positional URL so commander.js parses it as a flag,
+      // not as a second positional argument.  (Added in mcp-remote v0.1.35.)
+      ['-y', `mcp-remote@${MCP_REMOTE_VERSION}`, MCP_URL, '--resource', this.tenantUrl, '--silent'],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     this._rl = createInterface({ input: this._proc.stdout, crlfDelay: Infinity });
@@ -191,7 +192,8 @@ const sendUp = msg => process.stdout.write(JSON.stringify(msg) + '\n');
 
 // ─── Reconnection with exponential backoff ────────────────────────────────────
 function scheduleReconnect(key) {
-  if (!initParams) return; // not yet initialized — skip
+  if (_shuttingDown) return; // never reconnect during graceful shutdown
+  if (!initParams) return;  // not yet initialized — skip
   const acct = tenants.get(key);
   if (!acct) return;
   if (reconnectTimers.has(key)) return; // already scheduled
