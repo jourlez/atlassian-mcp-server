@@ -190,10 +190,11 @@ class ChildMcp {
 }
 
 // ─── Proxy state ──────────────────────────────────────────────────────────────
-const tenants    = new Map(); // key → { tenantUrl, label, projects, spaces, child, cloudIds, connected, retries }
-const cloudIdMap = new Map(); // cloudId   → accountKey
-const projMap    = new Map(); // PROJ_UPPER → accountKey
+const tenants         = new Map(); // key → { tenantUrl, label, projects, spaces, child, cloudIds, connected, retries }
+const cloudIdMap      = new Map(); // cloudId   → accountKey
+const projMap         = new Map(); // PROJ_UPPER → accountKey
 const reconnectTimers = new Map(); // key → timeout handle (setTimeout)
+const connectingNow   = new Map(); // key → Promise — prevents duplicate lazy-connect races
 let   initParams = null;
 let   _shuttingDown = false; // declared here — before scheduleReconnect — for clarity
 
@@ -235,6 +236,34 @@ function scheduleReconnect(key) {
   // Unref the timer so it does not prevent the event loop from exiting
   // naturally if the process is shutting down by other means.
   if (typeof t.unref === 'function') t.unref();
+}
+
+// ─── Lazy connect (on first use) ─────────────────────────────────────────────
+// Connects a single tenant only when a tool call is first routed to it.
+// Subsequent calls return immediately once the child is alive.
+async function ensureConnected(key) {
+  const acct = tenants.get(key);
+  if (!acct || !initParams) return null;
+  if (acct.child?.alive) return acct;
+  // If a connect is already in-flight for this key, wait for it instead of
+  // spawning a second mcp-remote child (race-safe).
+  if (connectingNow.has(key)) {
+    try { await connectingNow.get(key); } catch {}
+    return acct.child?.alive ? acct : null;
+  }
+  const p = (async () => {
+    await connectTenant(key, acct, initParams);
+    await discoverCloudIds(key, acct);
+  })();
+  connectingNow.set(key, p);
+  try {
+    await p;
+  } catch (err) {
+    error('lazy connect failed', { key, err: err.message });
+  } finally {
+    connectingNow.delete(key);
+  }
+  return acct.child?.alive ? acct : null;
 }
 
 // ─── Connect one tenant ────────────────────────────────────────────────────────
@@ -325,6 +354,36 @@ function routeToTenant(params) {
     if (m) { const t = tenants.get(projMap.get(m[1].toUpperCase())); if (t?.child?.alive) return t; }
   }
 
+  return null;
+}
+
+// routeKey: same logic as routeToTenant but returns the key string only,
+// without requiring the child to be alive (used for lazy connect decisions).
+function routeKey(params) {
+  const args = params?.arguments ?? {};
+  if (args.cloudId) {
+    const key = cloudIdMap.get(args.cloudId);
+    if (key) return key;
+  }
+  for (const f of ['issueKey', 'issue', 'issueIdOrKey', 'sourceIssue', 'targetIssue', 'epicKey']) {
+    const v = args[f];
+    if (v) {
+      const m = String(v).match(/^([A-Z][A-Z0-9]+)-\d+/);
+      if (m) { const k = projMap.get(m[1]); if (k) return k; }
+    }
+  }
+  for (const f of ['projectKey', 'project', 'projectId', 'spaceKey', 'spaceId']) {
+    const v = args[f];
+    if (v) { const k = projMap.get(String(v).toUpperCase()); if (k) return k; }
+  }
+  if (args.jql) {
+    const m = String(args.jql).match(/\bproject\s*(?:=|~|in\s*\()\s*"?'?([A-Z][A-Z0-9]*)"?'?/i);
+    if (m) { const k = projMap.get(m[1].toUpperCase()); if (k) return k; }
+  }
+  if (args.cql) {
+    const m = String(args.cql).match(/\bspace\s*=\s*"?'?([A-Z][A-Z0-9]*)"?'?/i);
+    if (m) { const k = projMap.get(m[1].toUpperCase()); if (k) return k; }
+  }
   return null;
 }
 
@@ -425,26 +484,21 @@ async function route(msg) {
       for (const s of acct.spaces   ?? []) projMap.set(s.toUpperCase(), key);
     }
 
-    const connectResults = await Promise.allSettled(
-      [...tenants.entries()].map(([k, a]) => connectTenant(k, a, params))
-    );
-    const firstOk = connectResults.find(r => r.status === 'fulfilled');
-    if (!firstOk) {
-      sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: 'Failed to connect to any Atlassian tenant.' } });
-      return;
-    }
-
-    // Block until cloudId discovery is complete so routing is ready from the first call
-    await Promise.allSettled([...tenants.entries()].map(([k, a]) => discoverCloudIds(k, a)));
-
-    const n = liveChildren().length;
-    log('proxy ready', { connected: n, total: tenants.size, cloudIds: cloudIdMap.size });
-    sendUp({ jsonrpc: '2.0', id, result: firstOk.value });
+    // Lazy mode: tenants connect on first use — no auth popups at startup.
+    log('proxy ready (tenants connect on first use)', { total: tenants.size });
+    sendUp({ jsonrpc: '2.0', id, result: {
+      protocolVersion: params?.protocolVersion ?? '2024-11-05',
+      capabilities: { tools: {} },
+      serverInfo: { name: 'atlassian-mcp-proxy', version: '1.0.0' },
+    }});
     return;
   }
 
   if (method === 'tools/list') {
-    const live = liveChildren();
+    // Lazy-connect the first configured tenant so the tool list is populated.
+    const firstKey = [...tenants.keys()][0];
+    const firstAcct = firstKey ? await ensureConnected(firstKey) : null;
+    const live = firstAcct ? [firstAcct] : liveChildren();
     if (!live.length) { sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL] } }); return; }
     try {
       const r = await live[0].child.request({ jsonrpc: '2.0', id: uid(), method: 'tools/list', params }, TIMEOUT_LIST_MS);
@@ -464,21 +518,29 @@ async function route(msg) {
     }
 
     if (FANOUT_MERGE_TOOLS.has(name)) {
+      // Merge across all tenants — lazy-connect each one first.
+      await Promise.allSettled([...tenants.keys()].map(k => ensureConnected(k)));
       sendUp({ jsonrpc: '2.0', id, result: await fanOutAndMerge(method, params) });
       return;
     }
 
-    const target = routeToTenant(params);
-    if (target?.child?.alive) {
-      try {
-        const r = await target.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_TOOL_MS);
-        sendUp({ ...r, id });
-      } catch (err) {
-        sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } });
+    // Try to route to a specific tenant (lazy-connect if needed).
+    const targetKey = routeKey(params);
+    if (targetKey) {
+      const acct = await ensureConnected(targetKey);
+      if (acct?.child?.alive) {
+        try {
+          const r = await acct.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_TOOL_MS);
+          sendUp({ ...r, id });
+        } catch (err) {
+          sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } });
+        }
+        return;
       }
-      return;
     }
 
+    // No specific route — fan-out to all (lazy-connect each first).
+    await Promise.allSettled([...tenants.keys()].map(k => ensureConnected(k)));
     sendUp(await fanOutFirst(method, params, id));
     return;
   }
