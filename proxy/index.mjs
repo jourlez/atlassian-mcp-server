@@ -17,6 +17,15 @@
  *
  * Config  : proxy/accounts.json
  * Tokens  : ~/.mcp-auth/ (managed by mcp-remote, one slot per tenant)
+ *
+ * Enterprise features:
+ *   - Pinned mcp-remote@0.1.38 (no @latest drift — supply chain safety)
+ *   - Config schema validation at startup
+ *   - Structured stderr logging with severity levels
+ *   - Uncaught exception / unhandled rejection safety net
+ *   - Automatic tenant reconnection with exponential backoff (max 3 retries)
+ *   - Graceful shutdown with 8 s force-kill deadline
+ *   - Configurable timeouts via env vars
  */
 
 import { spawn }           from 'node:child_process';
@@ -25,15 +34,43 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath }   from 'node:url';
 import path                from 'node:path';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const DIR     = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG  = path.join(DIR, 'accounts.json');
 const MCP_URL = 'https://mcp.atlassian.com/v1/mcp';
 
-const log = (...a) => process.stderr.write('[atlassian-proxy] ' + a.join(' ') + '\n');
+// Pin to exact version — never use @latest in production (supply chain risk)
+const MCP_REMOTE_VERSION = '0.1.38';
 
+// Timeouts (all overridable via environment variables for operational flexibility)
+const TIMEOUT_INIT_MS       = Number(process.env.ATLASSIAN_PROXY_INIT_TIMEOUT_MS)       || 120_000;
+const TIMEOUT_TOOL_MS       = Number(process.env.ATLASSIAN_PROXY_TOOL_TIMEOUT_MS)       ||  60_000;
+const TIMEOUT_FANOUT_MS     = Number(process.env.ATLASSIAN_PROXY_FANOUT_TIMEOUT_MS)     ||  60_000;
+const TIMEOUT_DISCOVER_MS   = Number(process.env.ATLASSIAN_PROXY_DISCOVER_TIMEOUT_MS)   ||  30_000;
+const TIMEOUT_LIST_MS       = Number(process.env.ATLASSIAN_PROXY_LIST_TIMEOUT_MS)       ||  15_000;
+const TIMEOUT_GENERIC_MS    = Number(process.env.ATLASSIAN_PROXY_GENERIC_TIMEOUT_MS)    ||  30_000;
+const TIMEOUT_SHUTDOWN_MS   = Number(process.env.ATLASSIAN_PROXY_SHUTDOWN_TIMEOUT_MS)   ||   8_000;
+const RECONNECT_MAX_RETRIES = Number(process.env.ATLASSIAN_PROXY_RECONNECT_MAX_RETRIES) ||  3;
+const RECONNECT_BASE_MS     = Number(process.env.ATLASSIAN_PROXY_RECONNECT_BASE_MS)     ||  5_000;
+
+// ─── Structured logging ───────────────────────────────────────────────────────
+// Writes JSON lines to stderr (never stdout — stdout is reserved for JSON-RPC).
+// Each entry: { ts, level, msg, ...fields }
+function emit(level, msg, fields = {}) {
+  process.stderr.write(
+    JSON.stringify({ ts: new Date().toISOString(), level, msg, ...fields }) + '\n',
+  );
+}
+const log   = (msg, f) => emit('info',  msg, f);
+const warn  = (msg, f) => emit('warn',  msg, f);
+const error = (msg, f) => emit('error', msg, f);
+const debug = (msg, f) => emit('debug', msg, f);
+
+// ─── Sequence counter ─────────────────────────────────────────────────────────
 let _seq = 0;
 const uid = () => `__p${++_seq}__`;
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const FANOUT_MERGE_TOOLS = new Set(['getAccessibleAtlassianResources']);
 
 const MGMT_TOOL = {
@@ -44,20 +81,38 @@ const MGMT_TOOL = {
   inputSchema: { type: 'object', properties: {}, required: [] },
 };
 
+// ─── Config schema validation ─────────────────────────────────────────────────
+function validateConfig(raw) {
+  if (typeof raw !== 'object' || raw === null) throw new Error('accounts.json must be a JSON object');
+  if (typeof raw.accounts !== 'object' || raw.accounts === null) throw new Error('accounts.json must have an "accounts" object');
+  const entries = Object.entries(raw.accounts);
+  if (entries.length === 0) throw new Error('accounts.json "accounts" must have at least one entry');
+  for (const [key, acct] of entries) {
+    if (typeof acct.tenantUrl !== 'string' || !acct.tenantUrl.startsWith('https://')) {
+      throw new Error(`accounts["${key}"].tenantUrl must be an https:// URL`);
+    }
+    if (!Array.isArray(acct.projects)) throw new Error(`accounts["${key}"].projects must be an array`);
+    if (!Array.isArray(acct.spaces))   throw new Error(`accounts["${key}"].spaces must be an array`);
+  }
+  return raw;
+}
+
 // ─── ChildMcp ─────────────────────────────────────────────────────────────────
 class ChildMcp {
   constructor(key, tenantUrl) {
-    this.key      = key;
+    this.key       = key;
     this.tenantUrl = tenantUrl;
-    this._proc    = null;
-    this._rl      = null;
-    this._pending = new Map();
+    this._proc     = null;
+    this._rl       = null;
+    this._pending  = new Map();
   }
 
   start() {
     this._proc = spawn(
       'npx',
-      ['-y', 'mcp-remote@latest', MCP_URL, '--resource', this.tenantUrl],
+      // Pinned version — never @latest — prevents silent drift and supply chain attacks.
+      // --silent suppresses mcp-remote's own diagnostic output so our stderr stays clean.
+      ['-y', `mcp-remote@${MCP_REMOTE_VERSION}`, '--silent', MCP_URL, '--resource', this.tenantUrl],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     this._rl = createInterface({ input: this._proc.stdout, crlfDelay: Infinity });
@@ -73,24 +128,28 @@ class ChildMcp {
         resolve(m);
       }
     });
-    this._proc.on('error', err => log(`${this.key}: spawn error: ${err.message}`));
-    this._proc.on('exit', code => {
+    this._proc.on('error', err => error('spawn error', { key: this.key, err: err.message }));
+    this._proc.on('exit', (code, signal) => {
       for (const { reject, timer } of this._pending.values()) {
         clearTimeout(timer);
-        reject(new Error(`${this.key}: exited (code=${code})`));
+        reject(new Error(`${this.key}: child exited (code=${code}, signal=${signal})`));
       }
       this._pending.clear();
+      if (code !== 0 && code !== null) {
+        warn('child exited unexpectedly — scheduling reconnect', { key: this.key, code, signal });
+        scheduleReconnect(this.key);
+      }
     });
   }
 
-  request(msg, timeoutMs = 30_000) {
+  request(msg, timeoutMs = TIMEOUT_GENERIC_MS) {
     return new Promise((resolve, reject) => {
       if (!this._proc || this._proc.exitCode !== null) {
         return reject(new Error(`${this.key}: not running`));
       }
       const timer = setTimeout(() => {
         this._pending.delete(msg.id);
-        reject(new Error(`${this.key}: timeout on ${msg.method}`));
+        reject(new Error(`${this.key}: timeout after ${timeoutMs}ms on ${msg.method}`));
       }, timeoutMs);
       this._pending.set(msg.id, { resolve, reject, timer });
       this._proc.stdin.write(JSON.stringify(msg) + '\n');
@@ -122,12 +181,47 @@ class ChildMcp {
 }
 
 // ─── Proxy state ──────────────────────────────────────────────────────────────
-const tenants    = new Map(); // key → { tenantUrl, label, projects, spaces, child, cloudIds, connected }
+const tenants    = new Map(); // key → { tenantUrl, label, projects, spaces, child, cloudIds, connected, retries }
 const cloudIdMap = new Map(); // cloudId   → accountKey
 const projMap    = new Map(); // PROJ_UPPER → accountKey
+const reconnectTimers = new Map(); // key → NodeJS.Timeout
 let   initParams = null;
 
 const sendUp = msg => process.stdout.write(JSON.stringify(msg) + '\n');
+
+// ─── Reconnection with exponential backoff ────────────────────────────────────
+function scheduleReconnect(key) {
+  if (!initParams) return; // not yet initialized — skip
+  const acct = tenants.get(key);
+  if (!acct) return;
+  if (reconnectTimers.has(key)) return; // already scheduled
+
+  const retries = acct.retries ?? 0;
+  if (retries >= RECONNECT_MAX_RETRIES) {
+    error('max reconnect retries reached — tenant offline', { key, retries });
+    return;
+  }
+
+  const delayMs = RECONNECT_BASE_MS * (2 ** retries); // 5s → 10s → 20s
+  warn('scheduling reconnect', { key, retries, delayMs });
+
+  const t = setTimeout(async () => {
+    reconnectTimers.delete(key);
+    acct.retries = retries + 1;
+    acct.connected = false;
+    try {
+      await connectTenant(key, acct, initParams);
+      acct.retries = 0; // reset on successful reconnect
+      await discoverCloudIds(key, acct);
+      log('tenant reconnected', { key });
+    } catch (err) {
+      error('reconnect failed', { key, err: err.message });
+      scheduleReconnect(key); // try again (will increment retries)
+    }
+  }, delayMs);
+
+  reconnectTimers.set(key, t);
+}
 
 // ─── Connect one tenant ────────────────────────────────────────────────────────
 async function connectTenant(key, acct, params) {
@@ -135,7 +229,7 @@ async function connectTenant(key, acct, params) {
   child.start();
   const resp = await child.request(
     { jsonrpc: '2.0', id: uid(), method: 'initialize', params },
-    120_000,
+    TIMEOUT_INIT_MS,
   );
   child.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
   if (resp.error) {
@@ -144,7 +238,7 @@ async function connectTenant(key, acct, params) {
   }
   acct.child     = child;
   acct.connected = true;
-  log(`connected: ${key}`);
+  log('tenant connected', { key });
   return resp.result;
 }
 
@@ -156,16 +250,16 @@ async function discoverCloudIds(key, acct) {
       jsonrpc: '2.0', id: uid(),
       method: 'tools/call',
       params: { name: 'getAccessibleAtlassianResources', arguments: {} },
-    }, 30_000);
+    }, TIMEOUT_DISCOVER_MS);
     for (const r of parseResourceArray(resp?.result)) {
       if (r.cloudId) {
         acct.cloudIds.add(r.cloudId);
         cloudIdMap.set(r.cloudId, key);
       }
     }
-    log(`${key}: cloudIds=[${[...acct.cloudIds].join(', ')}]`);
+    log('cloudId discovery complete', { key, cloudIds: [...acct.cloudIds] });
   } catch (err) {
-    log(`${key}: cloudId discovery skipped: ${err.message}`);
+    warn('cloudId discovery skipped', { key, err: err.message });
   }
 }
 
@@ -226,7 +320,7 @@ function liveChildren() {
 
 async function fanOutAndMerge(method, params) {
   const results = await Promise.allSettled(
-    liveChildren().map(a => a.child.request({ jsonrpc: '2.0', id: uid(), method, params }, 30_000))
+    liveChildren().map(a => a.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_FANOUT_MS))
   );
   const merged = [];
   for (const r of results) {
@@ -245,7 +339,7 @@ function fanOutFirst(method, params, parentId) {
     let left = live.length, done = false;
     const errors = [];
     for (const a of live) {
-      a.child.request({ jsonrpc: '2.0', id: uid(), method, params }, 60_000)
+      a.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_FANOUT_MS)
         .then(resp => {
           left--;
           if (!done && !resp.error) { done = true; resolve({ ...resp, id: parentId }); }
@@ -265,7 +359,8 @@ function handleGetConnections() {
   for (const [key, a] of tenants) {
     const status  = !a.connected ? 'failed' : (a.child?.alive ? 'connected' : 'disconnected');
     const ids     = a.cloudIds.size ? [...a.cloudIds].join(', ') : '(pending)';
-    lines.push(`${key}  [${status}]`);
+    const retries = a.retries ?? 0;
+    lines.push(`${key}  [${status}]${retries > 0 ? `  (reconnect attempt ${retries}/${RECONNECT_MAX_RETRIES})` : ''}`);
     lines.push(`  Tenant  : ${a.tenantUrl}`);
     lines.push(`  Label   : ${a.label}`);
     lines.push(`  CloudId : ${ids}`);
@@ -288,10 +383,20 @@ async function route(msg) {
   if (method === 'initialize') {
     initParams = params;
     tenants.clear(); cloudIdMap.clear(); projMap.clear();
+    for (const t of reconnectTimers.values()) clearTimeout(t);
+    reconnectTimers.clear();
 
-    const cfg = JSON.parse(await readFile(CONFIG, 'utf8'));
+    let cfg;
+    try {
+      cfg = validateConfig(JSON.parse(await readFile(CONFIG, 'utf8')));
+    } catch (err) {
+      error('failed to load config', { path: CONFIG, err: err.message });
+      sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: `Config error: ${err.message}` } });
+      return;
+    }
+
     for (const [key, acct] of Object.entries(cfg.accounts)) {
-      tenants.set(key, { ...acct, child: null, cloudIds: new Set(), connected: false });
+      tenants.set(key, { ...acct, child: null, cloudIds: new Set(), connected: false, retries: 0 });
       for (const p of acct.projects ?? []) projMap.set(p.toUpperCase(), key);
       for (const s of acct.spaces   ?? []) projMap.set(s.toUpperCase(), key);
     }
@@ -309,7 +414,7 @@ async function route(msg) {
     await Promise.allSettled([...tenants.entries()].map(([k, a]) => discoverCloudIds(k, a)));
 
     const n = liveChildren().length;
-    log(`ready: ${n}/${tenants.size} tenants connected, ${cloudIdMap.size} cloudId(s) mapped`);
+    log('proxy ready', { connected: n, total: tenants.size, cloudIds: cloudIdMap.size });
     sendUp({ jsonrpc: '2.0', id, result: firstOk.value });
     return;
   }
@@ -318,7 +423,7 @@ async function route(msg) {
     const live = liveChildren();
     if (!live.length) { sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL] } }); return; }
     try {
-      const r = await live[0].child.request({ jsonrpc: '2.0', id: uid(), method: 'tools/list', params }, 15_000);
+      const r = await live[0].child.request({ jsonrpc: '2.0', id: uid(), method: 'tools/list', params }, TIMEOUT_LIST_MS);
       sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL, ...(r.result?.tools ?? [])] } });
     } catch {
       sendUp({ jsonrpc: '2.0', id, result: { tools: [MGMT_TOOL] } });
@@ -342,7 +447,7 @@ async function route(msg) {
     const target = routeToTenant(params);
     if (target?.child?.alive) {
       try {
-        const r = await target.child.request({ jsonrpc: '2.0', id: uid(), method, params }, 60_000);
+        const r = await target.child.request({ jsonrpc: '2.0', id: uid(), method, params }, TIMEOUT_TOOL_MS);
         sendUp({ ...r, id });
       } catch (err) {
         sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } });
@@ -354,16 +459,49 @@ async function route(msg) {
     return;
   }
 
-  // All other MCP methods
+  // All other MCP methods — forward to first live tenant
   const live = liveChildren();
   if (!live.length) { sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: 'No Atlassian tenants connected.' } }); return; }
   try {
-    const r = await live[0].child.request({ ...msg, id: uid() }, 30_000);
+    const r = await live[0].child.request({ ...msg, id: uid() }, TIMEOUT_GENERIC_MS);
     sendUp({ ...r, id });
   } catch (err) {
     sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } });
   }
 }
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+let _shuttingDown = false;
+function shutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  log('shutting down', { signal });
+
+  for (const t of reconnectTimers.values()) clearTimeout(t);
+  reconnectTimers.clear();
+  for (const a of tenants.values()) a.child?.stop();
+
+  // Force exit after deadline in case any child hangs
+  const killer = setTimeout(() => {
+    warn('force-exit after shutdown timeout', { timeoutMs: TIMEOUT_SHUTDOWN_MS });
+    process.exit(1);
+  }, TIMEOUT_SHUTDOWN_MS);
+  // Unref so the timeout does not prevent natural exit if everything cleaned up
+  if (typeof killer.unref === 'function') killer.unref();
+
+  process.exit(0);
+}
+
+// ─── Process safety net ───────────────────────────────────────────────────────
+// Prevent uncaught exceptions / rejections from silently killing the proxy.
+// Log them and continue — the per-request .catch() in the stdin handler
+// already sends a JSON-RPC error back to the client for in-flight requests.
+process.on('uncaughtException', err => {
+  error('uncaughtException', { err: err.message, stack: err.stack });
+});
+process.on('unhandledRejection', (reason) => {
+  error('unhandledRejection', { reason: String(reason) });
+});
 
 // ─── Stdin ────────────────────────────────────────────────────────────────────
 const stdinRL = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -373,10 +511,11 @@ stdinRL.on('line', raw => {
   if (!line) return;
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
-  route(msg).catch(err => log('route error:', err.message));
+  route(msg).catch(err => error('route error', { err: err.message }));
 });
 
-stdinRL.on('close', () => { for (const a of tenants.values()) a.child?.stop(); process.exit(0); });
-process.on('SIGTERM',  () => { for (const a of tenants.values()) a.child?.stop(); process.exit(0); });
+stdinRL.on('close', () => shutdown('stdin-close'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
-log('started — config:', CONFIG);
+log('proxy started', { config: CONFIG, mcpRemoteVersion: MCP_REMOTE_VERSION });

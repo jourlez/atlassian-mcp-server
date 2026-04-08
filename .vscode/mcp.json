@@ -1,32 +1,9 @@
 {
   "servers": {
-    "apple-mcp": {
-      "command": "bunx",
-      "args": ["@dhravya/apple-mcp@latest"],
-      "type": "stdio",
-    },
-    "npm-helper": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/Users/jourlez/Documents/Code/npm-helper-mcp/dist/index.js"],
-    },
     "atlassian": {
       "type": "stdio",
       "command": "node",
-      "args": ["${workspaceFolder}/proxy/index.mjs"],
-    },
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["chrome-devtools-mcp@latest"],
-    },
-    "github": {
-      "type": "http",
-      "url": "https://api.githubcopilot.com/mcp/",
-    },
-  },
-  "inputs": [
-    {
-      
-    },
-  ],
+      "args": ["${workspaceFolder}/proxy/index.mjs"]
+    }
+  }
 }

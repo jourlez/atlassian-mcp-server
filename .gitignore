@@ -1,0 +1,37 @@
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.npm/
+
+# ─── OAuth tokens (managed by mcp-remote in ~/.mcp-auth — never commit) ───────
+# The ~/.mcp-auth directory lives outside the repo, but guard belt-and-suspenders.
+.mcp-auth/
+*.token
+*.oauth
+
+# ─── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── OS artefacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editor & IDE ─────────────────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code user-specific settings (these contain local machine paths and personal
+# preferences that must not be shared across contributors).
+.vscode/settings.json
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ─── Build output ─────────────────────────────────────────────────────────────
+dist/
+build/

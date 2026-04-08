@@ -6,7 +6,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://YOUR-FIRST-TENANT.atlassian.net/"
@@ -17,7 +17,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://YOUR-SECOND-TENANT.atlassian.net/"
@@ -28,7 +28,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote@latest",
+        "mcp-remote@0.1.38",
         "https://mcp.atlassian.com/v1/mcp",
         "--resource",
         "https://YOUR-THIRD-TENANT.atlassian.net/"
