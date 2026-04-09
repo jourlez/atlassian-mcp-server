@@ -704,9 +704,25 @@ async function route(msg) {
     try {
       cfg = validateConfig(JSON.parse(await readFile(CONFIG, 'utf8')));
     } catch (err) {
-      error('failed to load config', { path: CONFIG, err: err.message });
-      sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: `Config error: ${err.message}` } });
-      return;
+      if (err.code === 'ENOENT') {
+        // First run — bootstrap an empty config so the server starts cleanly.
+        // The user can then add accounts via atlassian_add_account or the
+        // atlassian-mcp-accounts CLI (npx --package=@jourlez/atlassian-mcp-server atlassian-mcp-accounts).
+        cfg = { accounts: {} };
+        try {
+          await mkdir(path.dirname(CONFIG), { recursive: true, mode: 0o700 });
+          await writeFile(CONFIG, JSON.stringify(cfg, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+          log('first run: created empty config', { path: CONFIG });
+        } catch (writeErr) {
+          error('failed to create config', { path: CONFIG, err: writeErr.message });
+          sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: `Config error: ${writeErr.message}` } });
+          return;
+        }
+      } else {
+        error('failed to load config', { path: CONFIG, err: err.message });
+        sendUp({ jsonrpc: '2.0', id, error: { code: -32603, message: `Config error: ${err.message}` } });
+        return;
+      }
     }
 
     for (const [key, acct] of Object.entries(cfg.accounts)) {
