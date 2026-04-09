@@ -748,7 +748,7 @@ async function route(msg) {
     log('proxy ready', { connected: n, total: tenants.size });
     sendUp({ jsonrpc: '2.0', id, result: {
       protocolVersion: params?.protocolVersion ?? '2024-11-05',
-      capabilities: { tools: {} },
+      capabilities: { tools: { listChanged: true } },
       serverInfo: { name: 'atlassian-mcp-proxy', version: '1.0.0' },
     }});
     return;
@@ -778,10 +778,12 @@ async function route(msg) {
     }
     if (name === 'atlassian_add_account') {
       sendUp({ jsonrpc: '2.0', id, result: await handleAddAccount(params?.arguments) });
+      sendUp({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
       return;
     }
     if (name === 'atlassian_remove_account') {
       sendUp({ jsonrpc: '2.0', id, result: await handleRemoveAccount(params?.arguments) });
+      sendUp({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
       return;
     }
 
