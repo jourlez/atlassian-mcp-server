@@ -302,7 +302,7 @@ createJiraIssue(
   issueTypeName="Bug",
   summary="[Clear, specific summary - see below]",
   description="[Detailed description - see below]",
-  fields={
+  additional_fields={
     "priority": {"name": "Medium"}  # Adjust based on user input severity assessment
   }
 )
@@ -524,7 +524,7 @@ Please provide these values so I can create the issue.
 ```
 createJiraIssue(
   ...existing parameters...,
-  fields={
+  additional_fields={
     "priority": {"name": "High"},
     "customfield_10001": {"value": "Production"}
   }
