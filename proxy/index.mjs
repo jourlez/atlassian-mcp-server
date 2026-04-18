@@ -571,15 +571,13 @@ async function handleAddAccount(args) {
   }
   if (!key) return { content: [{ type: 'text', text: JSON.stringify({ error: 'could not derive account key from URL' }) }] };
 
-  // Avoid duplicates
+  // If already present, tear it down cleanly before re-inserting.
   if (tenants.has(key)) {
-    const a = tenants.get(key);
-    return { content: [{ type: 'text', text: JSON.stringify({
-      status: a.child?.alive ? 'already_connected' : 'already_configured',
-      key,
-      tenantUrl: a.tenantUrl,
-      message: `Account "${key}" is already configured. Use atlassian_list_accounts to see its status.`,
-    }) }] };
+    const old = tenants.get(key);
+    try { old.child?.kill('SIGTERM'); } catch {}
+    for (const [k, v] of projMap) { if (v === key) projMap.delete(k); }
+    tenants.delete(key);
+    log('replacing existing account', { key });
   }
 
   const acct = {

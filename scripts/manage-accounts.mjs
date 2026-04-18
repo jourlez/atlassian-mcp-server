@@ -136,11 +136,7 @@ async function cmdAdd(iface) {
   const spaces   = rawSpaces.trim() ? rawSpaces.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
 
   const cfg = await readConfig();
-  if (cfg.accounts[key]) {
-    const over = await prompt(iface, `"${key}" already exists. Overwrite? (y/N): `);
-    if (over.toLowerCase() !== 'y') { console.log('  Aborted.'); return; }
-  }
-
+  delete cfg.accounts[key];
   cfg.accounts[key] = { tenantUrl, label, projects, spaces };
   await writeConfig(cfg);
   console.log(`\n✓ Added "${key}" → ${tenantUrl}`);
