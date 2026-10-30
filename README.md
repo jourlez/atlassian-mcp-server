@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/atlassian_logo_brand_RGB.svg">
+  <img src="images/atlassian_logo_brand_RGB.svg" alt="Atlassian" width="320">
 </p>
 
 # @jourlez/atlassian-mcp-server
